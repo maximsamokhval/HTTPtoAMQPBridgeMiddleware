@@ -37,18 +37,53 @@ curl http://localhost:8000/ready
 RABBITMQ_URL=amqp://guest:guest@localhost:5672/edi
 LOG_LEVEL=INFO
 LOG_FORMAT=json
+
+# Налаштування безпеки (Security)
+API_KEY_ENABLED=true
+API_KEY=ваш-секретний-ключ
+RATE_LIMIT_ENABLED=true
 ```
+
+## Безпека (Security)
+
+Проект відповідає стандартам **OWASP Top 10** та включає наступні механізми захисту:
+
+### 1. Авторизація (API Key)
+Всі запити до `/v1/*` повинні містити заголовок `X-API-Key`.
+- **Налаштування**: `API_KEY_ENABLED=true`.
+- **Заголовок**: `X-API-Key: <your_key>`.
+
+### 2. Обмеження запитів (Rate Limiting)
+Захист від DoS-атак та brute-force.
+- **Налаштування**: `RATE_LIMIT_ENABLED=true`.
+- **Ліміт**: 100 запитів на 60 секунд (налаштовується).
+
+### 3. Валідація вводу (Input Validation)
+Сувора перевірка назв черг та exchange для запобігання ін'єкціям.
+- **Дозволені символи**: `a-z`, `A-Z`, `0-9`, `.`, `-`, `_`.
+- **Заборонено**: `..`, `//`, префікс `amq.`.
+- **Макс. довжина**: 255 символів.
+
+### 4. Security Headers
+Middleware автоматично додає захисні заголовки:
+- `X-Frame-Options: DENY`
+- `Content-Security-Policy: default-src 'none'`
+- `Strict-Transport-Security` (HSTS)
+- `X-Content-Type-Options: nosniff`
 
 ## API Ендпоінти
 
+> [!IMPORTANT]
+> Для всіх ендпоінтів `/v1/` обов'язкова передача `X-API-Key` (якщо активовано в налаштуваннях).
+
 | Ендпоінт | Метод | Опис |
 |----------|--------|-------------|
-| `/health` | GET | Liveness probe (чи працює сервіс) |
-| `/ready` | GET | Readiness probe (чи є з'єднання з RabbitMQ) |
-| `/v1/publish/{exchange}/{routing_key}` | POST | Публікація повідомлення |
-| `/v1/fetch/{queue}?timeout=30` | GET | Отримання повідомлення (long-polling) |
-| `/v1/ack/{delivery_tag}` | POST | Підтвердження успішної обробки (ACK) |
-| `/v1/reject/{delivery_tag}` | POST | Відхилення повідомлення (Reject/DLX) |
+| `/health` | GET | Liveness probe (без AUTH) |
+| `/ready` | GET | Readiness probe (без AUTH) |
+| `/v1/publish/{ex}/{key}` | POST | Публікація повідомлення |
+| `/v1/fetch/{q}?timeout=30` | GET | Отримання повідомлення |
+| `/v1/ack/{delivery_tag}` | POST | Підтвердження (ACK) |
+| `/v1/reject/{tag}` | POST | Відхилення (Reject/DLX) |
 
 ---
 
@@ -228,23 +263,52 @@ curl -X POST http://localhost:8000/v1/publish/edi.internal.topic/erp_central.wh_
   }'
 ```
 
-## Розробка
+## Для розробників
+
+### Архітектура системи
+
+Сервіс побудований на базі **FastAPI** та **aio-pika** (асинхронний драйвер RabbitMQ).
+
+```mermaid
+graph TD
+    Client[HTTP Client / 1C] --> MW[Security Middleware]
+    MW --> Auth{Auth OK?}
+    Auth -- No --> E401[401 Unauthorized]
+    Auth -- Yes --> Rate{Rate Limit?}
+    Rate -- Exceeded --> E429[429 Too Many Requests]
+    Rate -- OK --> Route[FastAPI Router]
+    Route --> AMQP[AMQP Client Singleton]
+    AMQP --> RMQ[RabbitMQ Broker]
+```
+
+### Структура проекту
+- `src/rmq_middleware/security.py`: Логіка аутентифікації, rate limiting та валідації.
+- `src/rmq_middleware/amqp_wrapper.py`: Обгортка над RabbitMQ з механізмом повторних підключень.
+- `src/rmq_middleware/middleware.py`: JSON-логування та Request-ID трасування.
+
+### Розробка та тестування
 
 ```bash
-# Встановлення залежностей
+# Встановлення залежностей (uv)
 uv sync
 
-# Локальний запуск
-uv run uvicorn rmq_middleware.main:app --reload
+# Запуск linter (ruff)
+uv run ruff check .
 
-# API документація
-відкрити http://localhost:8000/docs
+# Локальний запуск для розробки
+uv run uvicorn rmq_middleware.main:app --reload --port 8000
 ```
+
+### Важливі примітки
+- **Singleton AMQPClient**: Використовує одне спільне підключення для всього додатку.
+- **Graceful Shutdown**: При зупинці сервіс чекає завершення активних запитів та коректно закриває AMQP-канали.
+
+---
 
 ## Додаткова документація
 
 - [Operator's Guide](docs/operators_guide.md) - Розгортання та адміністрування.
-- [OpenAPI Docs](http://localhost:8000/docs) - Інтерактивна специфікація API.
+- [Walkthrough](C:\Users\samokhval\.gemini\antigravity\brain\7564beff-b027-4652-bea0-be674b60125b\walkthrough.md) - Детальний опис реалізації.
 
 ## Ліцензія
 

@@ -7,9 +7,9 @@ Provides endpoints for:
 - Health and readiness probes
 """
 
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -22,6 +22,15 @@ from rmq_middleware.amqp_wrapper import (
     AMQPConsumeError,
 )
 from rmq_middleware.middleware import get_request_id
+from rmq_middleware.security import (
+    InputValidationError,
+    check_rate_limit,
+    validate_exchange_name,
+    validate_queue_name,
+    validate_request_size,
+    validate_routing_key,
+    verify_api_key,
+)
 
 
 # Request/Response Models
@@ -101,7 +110,18 @@ class ErrorResponse(BaseModel):
 # Routers
 
 router = APIRouter()
-v1_router = APIRouter(prefix="/v1", tags=["AMQP Operations"])
+
+# V1 router with security dependencies
+v1_router = APIRouter(
+    prefix="/v1",
+    tags=["AMQP Operations"],
+    dependencies=[
+        Depends(verify_api_key),
+        Depends(check_rate_limit),
+        Depends(validate_request_size),
+    ],
+)
+
 health_router = APIRouter(tags=["Health"])
 
 
@@ -127,6 +147,20 @@ async def publish_message(
     Returns 503 if RabbitMQ is unavailable (no RAM buffering).
     """
     request_id = get_request_id()
+    
+    # Validate input
+    try:
+        validate_exchange_name(exchange)
+        validate_routing_key(routing_key)
+    except InputValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ErrorResponse(
+                error="validation_error",
+                detail=str(e),
+                request_id=request_id,
+            ).model_dump(),
+        )
     
     try:
         client = await AMQPClient.get_instance()
@@ -196,6 +230,19 @@ async def fetch_message(
     The message requires explicit acknowledgment via POST /v1/ack/{delivery_tag}.
     """
     request_id = get_request_id()
+    
+    # Validate queue name
+    try:
+        validate_queue_name(queue)
+    except InputValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ErrorResponse(
+                error="validation_error",
+                detail=str(e),
+                request_id=request_id,
+            ).model_dump(),
+        )
     
     # Clamp timeout to reasonable bounds
     timeout = max(1.0, min(timeout, 300.0))

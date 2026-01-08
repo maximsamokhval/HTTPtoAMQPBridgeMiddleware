@@ -22,6 +22,7 @@ from rmq_middleware.amqp_wrapper import AMQPClient, AMQPClientError
 from rmq_middleware.config import get_settings
 from rmq_middleware.middleware import RequestIDMiddleware, setup_logging, get_request_id
 from rmq_middleware.routes import router
+from rmq_middleware.security import SecurityHeadersMiddleware
 
 
 # Global shutdown event
@@ -109,7 +110,8 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json",
     )
     
-    # Add middleware
+    # Add middleware (order matters - security headers first, then request ID)
+    app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestIDMiddleware)
     
     # Include routes
