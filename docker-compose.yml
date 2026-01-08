@@ -1,0 +1,68 @@
+services:
+  # ==========================================================================
+  # RabbitMQ Message Broker
+  # ==========================================================================
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: rmq-middleware-rabbitmq
+    hostname: rabbitmq
+    ports:
+      - "5672:5672" # AMQP
+      - "15672:15672" # Management UI
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+      RABBITMQ_DEFAULT_VHOST: /
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - rmq-network
+
+  # ==========================================================================
+  # RMQ Middleware Application
+  # ==========================================================================
+  middleware:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rmq-middleware-app
+    ports:
+      - "8000:8000"
+    environment:
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      RABBITMQ_PREFETCH_COUNT: 10
+      RETRY_ATTEMPTS: 5
+      RETRY_BASE_DELAY: 1.0
+      PUBLISH_TIMEOUT: 30.0
+      CONSUME_TIMEOUT: 30.0
+      LOG_LEVEL: INFO
+      LOG_FORMAT: json
+      APP_NAME: rmq-middleware
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8000
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - rmq-network
+    restart: unless-stopped
+
+volumes:
+  rabbitmq_data:
+    driver: local
+
+networks:
+  rmq-network:
+    driver: bridge

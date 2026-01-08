@@ -1,0 +1,79 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# --- Virtual Environments (uv & standard) ---
+.venv/
+venv/
+ENV/
+env/
+.env/
+
+# --- uv specific ---
+# Ми НЕ ігноруємо uv.lock для застосунків (production-ready solution),
+# але ігноруємо кеш uv, якщо він створюється локально.
+.uv/
+
+# --- Environment Variables (CRITICAL) ---
+# Ігноруємо всі файли з секретами
+.env
+.env.*
+!.env.example
+*.secrets
+
+# --- IDEs & Editors ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.project
+.pydevproject
+.settings/
+
+# --- Logs ---
+# Оскільки використовуємо loguru, лог-файли не мають бути в git
+*.log
+logs/
+
+# --- Docker ---
+# Якщо використовуємо локальні volume для RabbitMQ даних
+.docker_data/
+mysql_data/
+rabbitmq_data/
+
+# --- Testing ---
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+*.db
+*.sqlite
+htmlcov/
+.cache/
+
+# --- OS Specific ---
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+desktop.ini
