@@ -3,7 +3,7 @@ services:
   # RabbitMQ Message Broker
   # ==========================================================================
   rabbitmq:
-    image: rabbitmq:3.13-management-alpine
+    image: rabbitmq:4.0-management
     container_name: rmq-middleware-rabbitmq
     hostname: rabbitmq
     ports:
