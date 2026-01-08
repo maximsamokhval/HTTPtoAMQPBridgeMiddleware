@@ -1,18 +1,16 @@
 services:
   # ==========================================================================
-  # RabbitMQ Message Broker
+  # RabbitMQ Message Broker with EDI plugins
   # ==========================================================================
   rabbitmq:
     image: rabbitmq:3-management
     container_name: rmq-middleware-rabbitmq
-    hostname: rabbitmq
     ports:
       - "5672:5672" # AMQP
       - "15672:15672" # Management UI
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
-      RABBITMQ_DEFAULT_VHOST: /
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
@@ -35,7 +33,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/edi
       RABBITMQ_PREFETCH_COUNT: 10
       RETRY_ATTEMPTS: 5
       RETRY_BASE_DELAY: 1.0

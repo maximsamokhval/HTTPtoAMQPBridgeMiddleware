@@ -1,0 +1,248 @@
+{
+  "users": [],
+  "vhosts": [
+    {
+      "name": "/"
+    },
+    {
+      "name": "edi"
+    }
+  ],
+  "permissions": [
+    {
+      "user": "guest",
+      "vhost": "/",
+      "configure": ".*",
+      "write": ".*",
+      "read": ".*"
+    },
+    {
+      "user": "guest",
+      "vhost": "edi",
+      "configure": ".*",
+      "write": ".*",
+      "read": ".*"
+    }
+  ],
+  "topic_permissions": [],
+  "parameters": [],
+  "global_parameters": [],
+  "policies": [
+    {
+      "vhost": "edi",
+      "name": "dlx-policy",
+      "pattern": "^q\\.",
+      "apply-to": "queues",
+      "definition": {
+        "dead-letter-exchange": "edi.deadletter.topic"
+      },
+      "priority": 0
+    }
+  ],
+  "queues": [
+    {
+      "name": "q.erp_central.inbox",
+      "vhost": "edi",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-dead-letter-exchange": "edi.deadletter.topic",
+        "x-message-ttl": 604800000
+      }
+    },
+    {
+      "name": "q.acc_kyiv.inbox",
+      "vhost": "edi",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-dead-letter-exchange": "edi.deadletter.topic",
+        "x-message-ttl": 604800000
+      }
+    },
+    {
+      "name": "q.wh_lviv.inbox",
+      "vhost": "edi",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-dead-letter-exchange": "edi.deadletter.topic",
+        "x-message-ttl": 604800000
+      }
+    },
+    {
+      "name": "q.logistics.inbox",
+      "vhost": "edi",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-dead-letter-exchange": "edi.deadletter.topic",
+        "x-message-ttl": 604800000
+      }
+    },
+    {
+      "name": "q.deadletter",
+      "vhost": "edi",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {}
+    },
+    {
+      "name": "q.retry.5s",
+      "vhost": "edi",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-dead-letter-exchange": "edi.internal.topic",
+        "x-message-ttl": 5000
+      }
+    },
+    {
+      "name": "q.retry.30s",
+      "vhost": "edi",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-dead-letter-exchange": "edi.internal.topic",
+        "x-message-ttl": 30000
+      }
+    },
+    {
+      "name": "q.retry.5m",
+      "vhost": "edi",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-dead-letter-exchange": "edi.internal.topic",
+        "x-message-ttl": 300000
+      }
+    }
+  ],
+  "exchanges": [
+    {
+      "name": "edi.internal.topic",
+      "vhost": "edi",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "edi.deadletter.topic",
+      "vhost": "edi",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "edi.retry.topic",
+      "vhost": "edi",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    }
+  ],
+  "bindings": [
+    {
+      "source": "edi.internal.topic",
+      "vhost": "edi",
+      "destination": "q.erp_central.inbox",
+      "destination_type": "queue",
+      "routing_key": "*.erp_central.#",
+      "arguments": {}
+    },
+    {
+      "source": "edi.internal.topic",
+      "vhost": "edi",
+      "destination": "q.erp_central.inbox",
+      "destination_type": "queue",
+      "routing_key": "*.all.#",
+      "arguments": {}
+    },
+    {
+      "source": "edi.internal.topic",
+      "vhost": "edi",
+      "destination": "q.acc_kyiv.inbox",
+      "destination_type": "queue",
+      "routing_key": "*.acc_kyiv.#",
+      "arguments": {}
+    },
+    {
+      "source": "edi.internal.topic",
+      "vhost": "edi",
+      "destination": "q.acc_kyiv.inbox",
+      "destination_type": "queue",
+      "routing_key": "*.all.finance.#",
+      "arguments": {}
+    },
+    {
+      "source": "edi.internal.topic",
+      "vhost": "edi",
+      "destination": "q.wh_lviv.inbox",
+      "destination_type": "queue",
+      "routing_key": "*.wh_lviv.#",
+      "arguments": {}
+    },
+    {
+      "source": "edi.internal.topic",
+      "vhost": "edi",
+      "destination": "q.wh_lviv.inbox",
+      "destination_type": "queue",
+      "routing_key": "*.all.logistics.#",
+      "arguments": {}
+    },
+    {
+      "source": "edi.internal.topic",
+      "vhost": "edi",
+      "destination": "q.logistics.inbox",
+      "destination_type": "queue",
+      "routing_key": "#.despatch_advice.#",
+      "arguments": {}
+    },
+    {
+      "source": "edi.internal.topic",
+      "vhost": "edi",
+      "destination": "q.logistics.inbox",
+      "destination_type": "queue",
+      "routing_key": "#.logistics.#",
+      "arguments": {}
+    },
+    {
+      "source": "edi.deadletter.topic",
+      "vhost": "edi",
+      "destination": "q.deadletter",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "arguments": {}
+    },
+    {
+      "source": "edi.retry.topic",
+      "vhost": "edi",
+      "destination": "q.retry.5s",
+      "destination_type": "queue",
+      "routing_key": "retry.5s.#",
+      "arguments": {}
+    },
+    {
+      "source": "edi.retry.topic",
+      "vhost": "edi",
+      "destination": "q.retry.30s",
+      "destination_type": "queue",
+      "routing_key": "retry.30s.#",
+      "arguments": {}
+    },
+    {
+      "source": "edi.retry.topic",
+      "vhost": "edi",
+      "destination": "q.retry.5m",
+      "destination_type": "queue",
+      "routing_key": "retry.5m.#",
+      "arguments": {}
+    }
+  ]
+}
