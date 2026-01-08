@@ -227,6 +227,63 @@ async def init_topology(rabbitmq_url: str) -> None:
         print(f"  Bindings: {len(BINDINGS)}")
 
 
+import json
+import urllib.request
+import urllib.error
+from urllib.parse import urlparse
+
+async def ensure_vhost_exists(rabbitmq_url: str):
+    """Ensure the target vhost exists using RabbitMQ Management API."""
+    parsed = urlparse(rabbitmq_url)
+    
+    # Defaults and parsing
+    host = parsed.hostname or "localhost"
+    # Assume management port is 15672 if AMQP is 5672, or use default
+    mgmt_port = 15672 
+    username = parsed.username or "guest"
+    password = parsed.password or "guest"
+    vhost = parsed.path.lstrip("/")
+    
+    if not vhost:
+        print("Using default vhost '/', skipping creation.")
+        return
+
+    print(f"Checking vhost '{vhost}'...")
+    
+    # Base URL for Management API
+    base_url = f"http://{host}:{mgmt_port}/api"
+    
+    # Auth handler
+    password_mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
+    password_mgr.add_password(None, base_url, username, password)
+    handler = urllib.request.HTTPBasicAuthHandler(password_mgr)
+    opener = urllib.request.build_opener(handler)
+    
+    # 1. Create vhost via PUT /api/vhosts/{name}
+    vhost_url = f"{base_url}/vhosts/{vhost}"
+    try:
+        req = urllib.request.Request(vhost_url, method='PUT')
+        with opener.open(req) as response:
+            if response.status in (201, 204):
+                print(f"  ✓ Vhost '{vhost}' created/verified.")
+    except urllib.error.HTTPError as e:
+        print(f"  ⚠ Config warning: Could not create vhost (HTTP {e.code}). Attempting to connect anyway...")
+    except Exception as e:
+        print(f"  ⚠ Config warning: Could not connect to Management API ({e}). RabbitMQ Management plugin might be disabled.")
+
+    # 2. Set permissions for user via PUT /api/permissions/{vhost}/{user}
+    perm_url = f"{base_url}/permissions/{vhost}/{username}"
+    payload = json.dumps({"configure": ".*", "write": ".*", "read": ".*"}).encode('utf-8')
+    try:
+        req = urllib.request.Request(perm_url, data=payload, method='PUT')
+        req.add_header('Content-Type', 'application/json')
+        with opener.open(req) as response:
+             if response.status in (201, 204):
+                print(f"  ✓ Permissions set for user '{username}' on '{vhost}'.")
+    except Exception as e:
+        print(f"  ⚠ Warning: Could not set permissions ({e})")
+
+
 def main():
     """Main entry point."""
     rabbitmq_url = os.environ.get(
@@ -237,6 +294,10 @@ def main():
     print("=" * 60)
     print("EDI Topology Initialization")
     print("=" * 60)
+    
+    # Ensure vhost exists before connecting via AMQP
+    asyncio.run(ensure_vhost_exists(rabbitmq_url))
+
     print("""
 Routing Key Format: {source}.{target}.{domain}.{type}.{action}.{version}
 
