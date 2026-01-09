@@ -1,6 +1,6 @@
 # HTTP-to-AMQP Bridge Middleware
 
-![Build Status](https://github.com/intertstarch/rmq-middleware/actions/workflows/ci.yml/badge.svg)
+[![CI](https://github.com/maximsamokhval/HTTPtoAMQPBridgeMiddleware/actions/workflows/ci.yml/badge.svg)](https://github.com/maximsamokhval/HTTPtoAMQPBridgeMiddleware/actions/workflows/ci.yml)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
 
