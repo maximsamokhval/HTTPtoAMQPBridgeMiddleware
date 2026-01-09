@@ -1,7 +1,7 @@
 """Pydantic V2 models for RMQ Middleware."""
 
 from enum import IntEnum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 from pydantic import BaseModel, Field, ConfigDict
 
@@ -19,7 +19,7 @@ class PublishRequest(BaseModel):
 
     exchange: str = Field(..., description="Target Exchange name")
     routing_key: str = Field(..., description="Routing key for message distribution")
-    payload: Dict[str, Any] = Field(..., description="JSON-serializable message body")
+    payload: Union[Dict[str, Any], str] = Field(..., description="JSON-serializable message body or string")
     
     # Reliability Parameters
     mandatory: bool = Field(default=True, description="Return message if unroutable")
@@ -37,6 +37,5 @@ class FetchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     queue: str = Field(..., description="Queue name to consume from")
-    prefetch_count: int = Field(default=10, ge=1, le=100, description="Max messages to prefetch")
     timeout: int = Field(default=30, ge=0, le=300, description="Seconds to wait for data")
     auto_ack: bool = Field(default=False, description="Explicit ACK is required for EDI")

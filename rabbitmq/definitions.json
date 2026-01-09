@@ -1,5 +1,12 @@
 {
-  "users": [],
+  "users": [
+    {
+      "name": "guest",
+      "password_hash": "7LJnCTTTVmNrXD+EJ5j3wxflI9bUqPqZVewxoNqN5shkiRmA",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": "administrator"
+    }
+  ],
   "vhosts": [
     {
       "name": "/"

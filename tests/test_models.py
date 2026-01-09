@@ -41,14 +41,9 @@ class TestPublishRequest:
             "headers": {"x-custom": "value"},
         }
         model = PublishRequest(**data)
-        assert model.payload == "string payload" # Implicit String -> String if typed as Dict[str, Any] | str? NO, model is Dict[str, Any] currently.
-        # Wait, previous model definition was Dict[str, Any]. Wait, I should check models.py again or update it if needed.
-        # In models.py I wrote: payload: Dict[str, Any]
-        # In routes.py I wrote models that might be slightly different or I should have aligned them.
-        # Let's check models.py content logic. 
-        # If I want to allow string payload, I should update models.py to Union[Dict, str].
-        # For now, let's assume strict Dict per my `models.py` write.
-        
+        assert model.payload == "string payload"
+        assert model.persistence == DeliveryMode.TRANSIENT
+
     def test_invalid_persistence_enum(self):
         """Test invalid delivery mode."""
         data = {
@@ -86,15 +81,8 @@ class TestFetchRequest:
         """Test valid request with defaults."""
         model = FetchRequest(queue="my.queue")
         assert model.queue == "my.queue"
-        assert model.prefetch_count == 10
         assert model.timeout == 30
         assert model.auto_ack is False
-
-    @pytest.mark.parametrize("prefetch", [0, 101])
-    def test_prefetch_bounds(self, prefetch):
-        """Test prefetch_count boundaries (1-100)."""
-        with pytest.raises(ValidationError):
-            FetchRequest(queue="q", prefetch_count=prefetch)
 
     @pytest.mark.parametrize("timeout", [-1, 301])
     def test_timeout_bounds(self, timeout):

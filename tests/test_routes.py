@@ -64,6 +64,43 @@ class TestPublishRoute:
         response = client.post("/v1/publish", json=payload, headers=AUTH_HEADERS)
         assert response.status_code == 422
 
+
+class TestHealthRoutes:
+    """Tests for health and readiness probes."""
+
+    def test_health_check(self):
+        """Test GET /health."""
+        response = client.get("/health")
+        assert response.status_code == 200
+        assert response.json() == {"status": "healthy", "service": "rmq-middleware"}
+
+    def test_readiness_check_success(self, mock_amqp):
+        """Test GET /ready success."""
+        mock_amqp.health_check.return_value = {
+            "connected": True,
+            "ready": True,
+            "state": "connected",
+            "pending_messages": 0,
+        }
+        
+        response = client.get("/ready")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["amqp_ready"] is True
+
+    def test_readiness_check_failure(self, mock_amqp):
+        """Test GET /ready failure when AMQP not ready."""
+        mock_amqp.health_check.return_value = {
+            "connected": False,
+            "ready": False,
+            "state": "disconnected",
+            "pending_messages": 0,
+        }
+        
+        response = client.get("/ready")
+        assert response.status_code == 503
+        assert response.json()["detail"]["error"] == "not_ready"
+
     def test_publish_business_validation(self, mock_amqp, override_settings):
         """Test business logic validation (invalid characters)."""
         payload = {
