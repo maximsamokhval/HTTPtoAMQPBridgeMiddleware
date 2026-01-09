@@ -16,6 +16,8 @@ from typing import AsyncGenerator
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from loguru import logger
+from prometheus_client import Gauge
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from rmq_middleware import __version__
 from rmq_middleware.amqp_wrapper import AMQPClient, AMQPClientError
@@ -25,18 +27,30 @@ from rmq_middleware.routes import router
 from rmq_middleware.security import SecurityHeadersMiddleware
 
 
+# Metrics
+AMQP_STATUS = Gauge("rmq_middleware_amqp_status", "RabbitMQ connection status (1=connected, 0=disconnected)")
+PENDING_MESSAGES = Gauge("rmq_middleware_pending_messages", "Number of unacknowledged messages")
 
 
+async def update_metrics() -> None:
+    """Background task to update custom metrics."""
+    client = await AMQPClient.get_instance()
+    while True:
+        try:
+            health = await client.health_check()
+            AMQP_STATUS.set(1 if health["connected"] else 0)
+            PENDING_MESSAGES.set(health["pending_messages"])
+        except Exception:
+            AMQP_STATUS.set(0)
+        
+        # Update every 5 seconds
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            break
 
 
-# Global shutdown event
-shutdown_event = asyncio.Event()
-
-
-def handle_signal(sig: signal.Signals) -> None:
-    """Handle termination signals for graceful shutdown."""
-    logger.info(f"Received signal {sig.name}, initiating graceful shutdown")
-    shutdown_event.set()
+# Global shutdown event removed - relying on ASGI lifecycle
 
 
 @asynccontextmanager
@@ -51,7 +65,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         rabbitmq_url=settings.rabbitmq_url_masked,
     )
     
-
+    # Start metrics update task
+    metrics_task = asyncio.create_task(update_metrics())
 
     # Connect to RabbitMQ
     client = await AMQPClient.get_instance()
@@ -60,17 +75,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         logger.error(f"Failed to connect to RabbitMQ on startup: {e}")
     
-    if sys.platform != "win32":
-        loop = asyncio.get_running_loop()
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(sig, handle_signal, sig)
-    
     logger.info("RMQ Middleware started successfully")
     
     yield
     
     # Shutdown
     logger.info("Shutting down RMQ Middleware")
+    
+    # Cancel metrics task
+    metrics_task.cancel()
+    try:
+        await metrics_task
+    except asyncio.CancelledError:
+        pass
+
     await asyncio.sleep(0.5)
     
     try:
@@ -94,6 +112,9 @@ def create_app() -> FastAPI:
         redoc_url="/redoc",
         openapi_url="/openapi.json",
     )
+    
+    # Setup Prometheus instrumentation
+    Instrumentator().instrument(app).expose(app)
     
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestIDMiddleware)
@@ -130,16 +151,6 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
-
-
-if sys.platform == "win32":
-    def windows_signal_handler(sig, frame):
-        logger.info(f"Received signal {sig}, initiating shutdown")
-        shutdown_event.set()
-        asyncio.get_event_loop().call_later(5.0, sys.exit, 0)
-    
-    signal.signal(signal.SIGINT, windows_signal_handler)
-    signal.signal(signal.SIGTERM, windows_signal_handler)
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@ dependencies = [
     "aio-pika>=9.4.0",
     "pydantic-settings>=2.1.0",
     "loguru>=0.7.2",
+    "prometheus-fastapi-instrumentator>=7.0.0",
 ]
 
 [project.optional-dependencies]
