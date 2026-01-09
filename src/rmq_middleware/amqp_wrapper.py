@@ -211,25 +211,39 @@ class AMQPClient:
                 logger.error(f"Error in cleanup loop: {e}")
 
     async def _create_session(self, url: str) -> UserSession:
-        """Create a new AMQP session from URL."""
-        connection = await aio_pika.connect_robust(
-            url,
-            timeout=30.0,
-        )
+        """Create a new AMQP session from URL with retries."""
+        last_error = None
         
-        # Create channels
-        pub_channel = await connection.channel()
-        await pub_channel.set_qos(prefetch_count=self._settings.rabbitmq_prefetch_count)
+        for attempt in range(self._settings.retry_attempts):
+            try:
+                if attempt > 0:
+                    delay = self._settings.retry_base_delay * (2 ** (attempt - 1))
+                    logger.warning(f"Retrying connection in {delay:.1f}s")
+                    await asyncio.sleep(delay)
+
+                connection = await aio_pika.connect_robust(
+                    url,
+                    timeout=30.0,
+                )
+                
+                # Create channels
+                pub_channel = await connection.channel()
+                await pub_channel.set_qos(prefetch_count=self._settings.rabbitmq_prefetch_count)
+                
+                sub_channel = await connection.channel()
+                await sub_channel.set_qos(prefetch_count=self._settings.rabbitmq_prefetch_count)
+                
+                return UserSession(
+                    connection=connection,
+                    publisher_channel=pub_channel,
+                    consumer_channel=sub_channel,
+                    last_used=time.time(),
+                )
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Connection attempt {attempt + 1} failed: {e}")
         
-        sub_channel = await connection.channel()
-        await sub_channel.set_qos(prefetch_count=self._settings.rabbitmq_prefetch_count)
-        
-        return UserSession(
-            connection=connection,
-            publisher_channel=pub_channel,
-            consumer_channel=sub_channel,
-            last_used=time.time(),
-        )
+        raise AMQPConnectionError(f"Failed to connect after {self._settings.retry_attempts} attempts: {last_error}")
 
     async def _get_session(self, credentials: Tuple[str, str] | None = None) -> UserSession:
         """Get or create a session for the given credentials.
@@ -279,6 +293,9 @@ class AMQPClient:
                     self._sessions[key] = session
                 return session
             except Exception as e:
+                # _create_session already raises AMQPConnectionError, but we might catch others
+                if isinstance(e, AMQPConnectionError):
+                    raise
                 logger.error(f"Failed to create session for {username}: {e}")
                 raise AMQPConnectionError(f"Authentication failed or broker unreachable: {e}")
 
@@ -288,8 +305,13 @@ class AMQPClient:
                 return self._system_session
             
             logger.info("Connecting system session...")
-            self._system_session = await self._create_session(self._settings.rabbitmq_url_str)
-            return self._system_session
+            try:
+                self._system_session = await self._create_session(self._settings.rabbitmq_url_str)
+                return self._system_session
+            except Exception as e:
+                if isinstance(e, AMQPConnectionError):
+                    raise
+                raise AMQPConnectionError(f"System connection failed: {e}")
 
     async def connect(self) -> None:
         """Initialize system connection (legacy support)."""
