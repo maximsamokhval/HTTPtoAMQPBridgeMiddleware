@@ -3,12 +3,12 @@
 import asyncio
 import os
 import socket
+import logging
 import pytest
 from fastapi.testclient import TestClient
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.waiting_utils import wait_for_logs
-
-import logging
+import aio_pika
 
 logger = logging.getLogger(__name__)
 
@@ -62,15 +62,56 @@ def integration_app(rabbitmq_container, monkeypatch):
     from rmq_middleware.amqp_wrapper import AMQPClient
     
     logger.info("Resetting AMQPClient instance for integration tests...")
+    # We must reset this because unit tests might have mocked it or left it dirty
     asyncio.run(AMQPClient.reset_instance())
     
     return app
 
+@pytest.fixture
+def amqp_url(rabbitmq_container):
+    """Return the AMQP URL string."""
+    if rabbitmq_container:
+        host = rabbitmq_container.get_container_host_ip()
+        port = rabbitmq_container.get_exposed_port(5672)
+        return f"amqp://guest:guest@{host}:{port}/"
+    return "amqp://guest:guest@localhost:5672/"
+
 @pytest.mark.asyncio
-async def test_full_integration_flow(integration_app):
+async def test_full_integration_flow(integration_app, amqp_url):
     """Test full cycle: Publish -> Fetch -> Ack."""
     
-    # Use TestClient as context manager to keep lifespan (and AMQP connection) active
+    # 1. Setup Topology using a separate, independent connection
+    # This avoids "Event Loop" conflicts between TestClient and the App's internal singleton
+    logger.info("Step 1: Setting up topology (external)...")
+    
+    import uuid
+    unique_suffix = str(uuid.uuid4())[:8]
+    ex_name = f"test.integration.ex.{unique_suffix}"
+    q_name = f"test.integration.q.{unique_suffix}"
+    r_key = "test.key"
+    
+    dlx_name = f"{ex_name}.dlx"
+    
+    connection = await aio_pika.connect_robust(amqp_url)
+    async with connection:
+        channel = await connection.channel()
+        
+        # Declare DLX
+        await channel.declare_exchange(dlx_name, aio_pika.ExchangeType.FANOUT, durable=True)
+        
+        # Declare Main Exchange
+        exchange = await channel.declare_exchange(ex_name, aio_pika.ExchangeType.TOPIC, durable=True)
+        
+        # Declare Queue with DLX
+        queue = await channel.declare_queue(
+            q_name,
+            durable=True,
+            arguments={"x-dead-letter-exchange": dlx_name}
+        )
+        await queue.bind(exchange, routing_key=r_key)
+        logger.info(f"Topology set: Exchange={ex_name}, Queue={q_name}")
+
+    # 2. Use TestClient to interact with the API
     with TestClient(integration_app) as client:
         logger.info("TestClient initialized (Lifespan started).")
         
@@ -79,31 +120,6 @@ async def test_full_integration_flow(integration_app):
         auth_str = f"{username}:{password}"
         b64_auth = base64.b64encode(auth_str.encode()).decode()
         headers = {"Authorization": f"Basic {b64_auth}"}
-
-        # 1. Setup Topology
-        # We use the singleton which is now connected by the App's startup event
-        logger.info("Step 1: Setting up topology...")
-        from rmq_middleware.amqp_wrapper import AMQPClient, TopologyConfig
-        amqp_client = await AMQPClient.get_instance()
-        
-        # Ensure connected (should be done by lifespan, but safe to check)
-        if not amqp_client.is_connected:
-            await amqp_client.connect()
-        
-        import uuid
-        unique_suffix = str(uuid.uuid4())[:8]
-        ex_name = f"test.integration.ex.{unique_suffix}"
-        q_name = f"test.integration.q.{unique_suffix}"
-        r_key = "test.key"
-
-        await amqp_client.setup_topology(
-            TopologyConfig(
-                exchange_name=ex_name,
-                queue_name=q_name,
-                routing_key=r_key
-            )
-        )
-        logger.info(f"Topology set: Exchange={ex_name}, Queue={q_name}")
 
         # 2. Publish Message
         logger.info("Step 2: Publishing message...")
