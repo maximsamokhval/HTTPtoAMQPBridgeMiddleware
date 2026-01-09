@@ -14,15 +14,6 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12"]
 
-    services:
-      # Helper service for tests if we didn't use testcontainers
-      # But since we use testcontainers, we rely on Docker socket availability
-      rabbitmq:
-        image: rabbitmq:3.11-management-alpine
-        ports:
-          - 5672:5672
-          - 15672:15672
-
     steps:
     - uses: actions/checkout@v4
 
@@ -36,12 +27,16 @@ jobs:
       run: uv sync --all-extras --dev
 
     - name: Run Unit Tests
+      # We provide a dummy RABBITMQ_URL to satisfy Pydantic validation during test collection
+      # (Unit tests mock the actual connection anyway)
       run: uv run pytest tests/test_models.py tests/test_routes.py
+      env:
+        RABBITMQ_URL: "amqp://guest:guest@localhost:5672/"
+        LOG_LEVEL: "DEBUG"
 
     - name: Run Integration Tests
-      # Note: Testcontainers needs valid docker socket. GitHub Actions provides this.
-      # We skip if no docker is present, but in GH Actions it is.
+      # Testcontainers will provide the real URL, but we set a default to pass collection
       run: uv run pytest tests/test_integration.py
       env:
-        # Override any defaults to ensure clean env
-        LOG_LEVEL: DEBUG
+        RABBITMQ_URL: "amqp://guest:guest@localhost:5672/"
+        LOG_LEVEL: "DEBUG"

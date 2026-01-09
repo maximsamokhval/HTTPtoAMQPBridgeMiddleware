@@ -4,35 +4,44 @@ import asyncio
 import os
 import pytest
 from fastapi.testclient import TestClient
-from testcontainers.rabbitmq import RabbitMqContainer
-import time
-
-# Use a separate scope for integration tests if needed, but standard pytest is fine.
-# We need to make sure we don't depend on the 'mock_amqp' fixture from other tests.
+from testcontainers.core.container import DockerContainer
+from testcontainers.core.waiting_utils import wait_for_logs
 
 @pytest.fixture(scope="module")
 def rabbitmq_container():
-    """Spin up a RabbitMQ container."""
+    """Spin up a RabbitMQ container using generic DockerContainer.
+    
+    We use generic DockerContainer instead of RabbitMqContainer to avoid 
+    dependency on 'pika' and potential protocol conflicts during health checks.
+    """
     # rabbitmq:3.11-management-alpine is a good lightweight default
-    with RabbitMqContainer("rabbitmq:3.11-management-alpine") as rabbitmq:
+    with DockerContainer("rabbitmq:3.11-management-alpine") as rabbitmq:
+        # Expose standard AMQP port
+        rabbitmq.with_exposed_ports(5672)
+        
+        # Start the container
+        rabbitmq.start()
+        
+        # Wait for RabbitMQ to be fully ready by checking logs
+        # This is more robust than TCP checks in CI environments
+        wait_for_logs(rabbitmq, "Server startup complete", timeout=60)
+        
         yield rabbitmq
 
 @pytest.fixture
 def integration_app(rabbitmq_container, monkeypatch):
     """Create a FastAPI app instance connected to the container."""
     
-    # Manually construct URL since get_connection_url might be missing/broken
+    # Manually construct URL
     host = rabbitmq_container.get_container_host_ip()
     port = rabbitmq_container.get_exposed_port(5672)
     amqp_url = f"amqp://guest:guest@{host}:{port}/"
     
     # Override environment settings
     monkeypatch.setenv("RABBITMQ_URL", amqp_url)
-    # Ensure other settings are defaults
-    monkeypatch.setenv("API_KEY_ENABLED", "false") # Basic Auth is default now
+    monkeypatch.setenv("API_KEY_ENABLED", "false")
     
     # Import here to avoid early config loading before monkeypatch
-    # We need to reload settings or create a fresh app
     from rmq_middleware.config import get_settings
     get_settings.cache_clear()
     
@@ -40,7 +49,6 @@ def integration_app(rabbitmq_container, monkeypatch):
     from rmq_middleware.amqp_wrapper import AMQPClient
     
     # Reset singleton to ensure fresh connection to container
-    # (Since other unit tests might have mocked it)
     asyncio.run(AMQPClient.reset_instance())
     
     return app
@@ -51,7 +59,7 @@ async def test_full_integration_flow(integration_app, rabbitmq_container):
     
     client = TestClient(integration_app)
     
-    # Construct credentials manually
+    # Default credentials for the image are guest:guest
     username, password = "guest", "guest"
     
     import base64
@@ -59,22 +67,11 @@ async def test_full_integration_flow(integration_app, rabbitmq_container):
     b64_auth = base64.b64encode(auth_str.encode()).decode()
     headers = {"Authorization": f"Basic {b64_auth}"}
 
-    # 1. Setup Topology (using publish to auto-declare or implicit)
-    # But wait, our Publish endpoint validates exchange existence? 
-    # AMQPClient.publish uses the channel to 'get_exchange'. 
-    # If we use a default exchange like "amq.topic", it should exist.
-    # Or we rely on the fact that our code creates the exchange?
-    # Actually, the code expects the exchange to exist usually, OR we declare it.
-    # Looking at amqp_wrapper.py -> publish -> get_exchange(exchange)
-    # If the exchange doesn't exist, aio-pika's get_exchange might fail if we don't ensure it exists.
-    # Let's use the AMQPClient to setup topology first via a "hack" or just rely on amq.topic
-    
-    # Better: Use the internal AMQPClient to setup a test queue/exchange first
+    # 1. Setup Topology
     from rmq_middleware.amqp_wrapper import AMQPClient, TopologyConfig
     amqp_client = await AMQPClient.get_instance()
-    await amqp_client.connect() # Connects with system/default creds from env
+    await amqp_client.connect()
     
-    # Create topology
     await amqp_client.setup_topology(
         TopologyConfig(
             exchange_name="test.integration.ex",
@@ -116,5 +113,3 @@ async def test_full_integration_flow(integration_app, rabbitmq_container):
     # 5. Verify Queue is Empty
     response_empty = client.post("/v1/fetch", json=fetch_payload, headers=headers)
     assert response_empty.status_code == 204
-
-    # Cleanup handled by container shutdown
