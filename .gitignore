@@ -77,3 +77,4 @@ htmlcov/
 ._*
 Thumbs.db
 desktop.ini
+test_output.txt

@@ -7,21 +7,21 @@ Provides endpoints for:
 - Health and readiness probes
 """
 
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import JSONResponse
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from rmq_middleware.amqp_wrapper import (
     AMQPClient,
-    AMQPClientError,
     AMQPConnectionError,
     AMQPPublishError,
     AMQPConsumeError,
 )
 from rmq_middleware.middleware import get_request_id
+from rmq_middleware.models import PublishRequest, FetchRequest, DeliveryMode
 from rmq_middleware.security import (
     InputValidationError,
     check_rate_limit,
@@ -33,23 +33,7 @@ from rmq_middleware.security import (
 )
 
 
-# Request/Response Models
-
-class PublishRequest(BaseModel):
-    """Request body for message publishing."""
-    payload: dict[str, Any] | str = Field(
-        ...,
-        description="Message body (object or string)",
-    )
-    headers: dict[str, Any] | None = Field(
-        default=None,
-        description="Optional message headers",
-    )
-    persistent: bool = Field(
-        default=True,
-        description="If true, message survives broker restart",
-    )
-
+# Response Models
 
 class PublishResponse(BaseModel):
     """Response for successful publish."""
@@ -57,6 +41,8 @@ class PublishResponse(BaseModel):
     request_id: str | None = None
     exchange: str
     routing_key: str
+    message_id: str | None = None
+    correlation_id: str | None = None
 
 
 class MessageResponse(BaseModel):
@@ -72,10 +58,7 @@ class MessageResponse(BaseModel):
 
 class AckRequest(BaseModel):
     """Request body for message acknowledgment."""
-    requeue: bool = Field(
-        default=False,
-        description="If rejecting, whether to requeue the message",
-    )
+    requeue: bool = False
 
 
 class AckResponse(BaseModel):
@@ -128,7 +111,7 @@ health_router = APIRouter(tags=["Health"])
 # V1 API Endpoints
 
 @v1_router.post(
-    "/publish/{exchange}/{routing_key}",
+    "/publish",
     response_model=PublishResponse,
     status_code=status.HTTP_202_ACCEPTED,
     responses={
@@ -137,21 +120,19 @@ health_router = APIRouter(tags=["Health"])
     },
 )
 async def publish_message(
-    exchange: str,
-    routing_key: str,
     body: PublishRequest,
 ) -> PublishResponse:
-    """Publish a message to RabbitMQ.
+    """Publish a message to RabbitMQ with strict schema validation.
     
     Returns 202 Accepted only after the broker confirms the message is persisted.
     Returns 503 if RabbitMQ is unavailable (no RAM buffering).
     """
     request_id = get_request_id()
     
-    # Validate input
+    # Validate input format (business logic validation)
     try:
-        validate_exchange_name(exchange)
-        validate_routing_key(routing_key)
+        validate_exchange_name(body.exchange)
+        validate_routing_key(body.routing_key)
     except InputValidationError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -166,17 +147,22 @@ async def publish_message(
         client = await AMQPClient.get_instance()
         
         await client.publish(
-            exchange=exchange,
-            routing_key=routing_key,
+            exchange=body.exchange,
+            routing_key=body.routing_key,
             payload=body.payload,
             headers=body.headers,
-            persistent=body.persistent,
+            persistent=(body.persistence == DeliveryMode.PERSISTENT),
+            mandatory=body.mandatory,
+            message_id=body.message_id,
+            correlation_id=body.correlation_id,
         )
         
         return PublishResponse(
             request_id=request_id,
-            exchange=exchange,
-            routing_key=routing_key,
+            exchange=body.exchange,
+            routing_key=body.routing_key,
+            message_id=body.message_id,
+            correlation_id=body.correlation_id or request_id, 
         )
         
     except AMQPConnectionError as e:
@@ -211,8 +197,8 @@ async def publish_message(
         )
 
 
-@v1_router.get(
-    "/fetch/{queue}",
+@v1_router.post(
+    "/fetch",
     response_model=MessageResponse | None,
     responses={
         200: {"model": MessageResponse, "description": "Message retrieved"},
@@ -220,20 +206,22 @@ async def publish_message(
         503: {"model": ErrorResponse, "description": "RabbitMQ unavailable"},
     },
 )
-async def fetch_message(
-    queue: str,
-    timeout: float = 30.0,
+async def fetch_message_post(
+    body: FetchRequest,
 ) -> MessageResponse | JSONResponse:
-    """Fetch a single message from a queue (long-polling style).
+    """Fetch a single message from a queue (long-polling) using POST body params.
+    
+    Supports:
+    - Custom timeout (0-300s)
+    - Auto-acknowledgment (auto_ack=True)
     
     Returns 200 with message if available, 204 if no message within timeout.
-    The message requires explicit acknowledgment via POST /v1/ack/{delivery_tag}.
     """
     request_id = get_request_id()
     
     # Validate queue name
     try:
-        validate_queue_name(queue)
+        validate_queue_name(body.queue)
     except InputValidationError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -244,13 +232,14 @@ async def fetch_message(
             ).model_dump(),
         )
     
-    # Clamp timeout to reasonable bounds
-    timeout = max(1.0, min(timeout, 300.0))
-    
     try:
         client = await AMQPClient.get_instance()
         
-        message = await client.consume_one(queue_name=queue, timeout=timeout)
+        message = await client.consume_one(
+            queue_name=body.queue, 
+            timeout=float(body.timeout),
+            auto_ack=body.auto_ack
+        )
         
         if message is None:
             return JSONResponse(
@@ -304,7 +293,7 @@ async def acknowledge_message(
 ) -> AckResponse:
     """Acknowledge successful message processing.
     
-    Must be called after processing a message fetched via GET /v1/fetch/{queue}.
+    Must be called after processing a message fetched via /fetch endpoint (if auto_ack=False).
     """
     request_id = get_request_id()
     

@@ -24,6 +24,58 @@ from rmq_middleware.middleware import RequestIDMiddleware, setup_logging, get_re
 from rmq_middleware.routes import router
 from rmq_middleware.security import SecurityHeadersMiddleware
 
+import urllib.request
+import urllib.error
+import urllib.parse
+import json
+
+async def check_and_create_vhost(rabbitmq_url: str) -> None:
+    """Ensure vhost and permissions exist via Management API."""
+    try:
+        parsed = urllib.parse.urlparse(rabbitmq_url)
+        host = parsed.hostname or "localhost"
+        mgmt_port = 15672  # Assumes standard management port mapping
+        username = parsed.username or "guest"
+        password = parsed.password or "guest"
+        vhost = parsed.path.lstrip("/")
+        
+        if not vhost:
+            return
+
+        base_url = f"http://{host}:{mgmt_port}/api"
+        
+        # Setup Auth
+        password_mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
+        password_mgr.add_password(None, base_url, username, password)
+        handler = urllib.request.HTTPBasicAuthHandler(password_mgr)
+        opener = urllib.request.build_opener(handler)
+        
+        # 1. Create Vhost
+        logger.info(f"Checking vhost '{vhost}' via HTTP API...")
+        vhost_url = f"{base_url}/vhosts/{vhost}"
+        req = urllib.request.Request(vhost_url, method='PUT')
+        try:
+            with opener.open(req) as resp:
+                if resp.status in (201, 204):
+                    logger.info(f"Vhost '{vhost}' verified/created.")
+        except urllib.error.HTTPError as e:
+             logger.warning(f"Failed to create vhost: {e}")
+
+        # 2. Set Permissions
+        perm_url = f"{base_url}/permissions/{vhost}/{username}"
+        payload = json.dumps({"configure": ".*", "write": ".*", "read": ".*"}).encode('utf-8')
+        req = urllib.request.Request(perm_url, data=payload, method='PUT')
+        req.add_header('Content-Type', 'application/json')
+        try:
+            with opener.open(req) as resp:
+                if resp.status in (201, 204):
+                    logger.info(f"Permissions set for user '{username}'.")
+        except urllib.error.HTTPError as e:
+             logger.warning(f"Failed to set permissions: {e}")
+             
+    except Exception as e:
+        logger.error(f"Vhost initialization execution failed: {e}")
+
 
 # Global shutdown event
 shutdown_event = asyncio.Event()
@@ -37,20 +89,7 @@ def handle_signal(sig: signal.Signals) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Application lifespan manager.
-    
-    Handles startup and shutdown sequences:
-    
-    Startup:
-    1. Configure logging
-    2. Connect to RabbitMQ
-    
-    Shutdown:
-    1. Stop accepting new requests (handled by FastAPI)
-    2. Wait for in-flight requests (brief delay)
-    3. Disconnect from RabbitMQ
-    4. Log completion
-    """
+    """Application lifespan manager."""
     settings = get_settings()
     
     # Startup
@@ -60,15 +99,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         rabbitmq_url=settings.rabbitmq_url_masked,
     )
     
+    # Ensure vhost exists (Cold start support)
+    try:
+        await check_and_create_vhost(settings.rabbitmq_url_str)
+    except Exception as e:
+        logger.warning(f"Vhost check failed (ignoring): {e}")
+
     # Connect to RabbitMQ
     client = await AMQPClient.get_instance()
     try:
         await client.connect()
     except Exception as e:
         logger.error(f"Failed to connect to RabbitMQ on startup: {e}")
-        # Continue anyway - will retry on first request or via background task
     
-    # Register signal handlers (Unix-like systems)
     if sys.platform != "win32":
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
@@ -80,11 +123,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     
     # Shutdown
     logger.info("Shutting down RMQ Middleware")
-    
-    # Brief delay to allow in-flight requests to complete
     await asyncio.sleep(0.5)
     
-    # Disconnect from RabbitMQ
     try:
         await client.disconnect()
     except Exception as e:
@@ -95,9 +135,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
-    settings = get_settings()
-    
-    # Configure logging first
     setup_logging()
     
     app = FastAPI(
@@ -110,17 +147,13 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json",
     )
     
-    # Add middleware (order matters - security headers first, then request ID)
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestIDMiddleware)
     
-    # Include routes
     app.include_router(router)
     
-    # Register exception handlers
     @app.exception_handler(AMQPClientError)
     async def amqp_error_handler(request: Request, exc: AMQPClientError) -> JSONResponse:
-        """Handle AMQP client errors."""
         request_id = get_request_id()
         logger.error(f"AMQP error: {exc}", request_id=request_id)
         return JSONResponse(
@@ -134,7 +167,6 @@ def create_app() -> FastAPI:
     
     @app.exception_handler(Exception)
     async def general_error_handler(request: Request, exc: Exception) -> JSONResponse:
-        """Handle unexpected errors."""
         request_id = get_request_id()
         logger.exception(f"Unexpected error: {exc}", request_id=request_id)
         return JSONResponse(
@@ -149,17 +181,13 @@ def create_app() -> FastAPI:
     return app
 
 
-# Create application instance
 app = create_app()
 
 
-# Windows signal handling
 if sys.platform == "win32":
     def windows_signal_handler(sig, frame):
-        """Windows-compatible signal handler."""
         logger.info(f"Received signal {sig}, initiating shutdown")
         shutdown_event.set()
-        # Force exit after brief delay if graceful shutdown fails
         asyncio.get_event_loop().call_later(5.0, sys.exit, 0)
     
     signal.signal(signal.SIGINT, windows_signal_handler)

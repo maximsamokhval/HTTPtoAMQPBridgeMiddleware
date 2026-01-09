@@ -340,6 +340,9 @@ class AMQPClient:
         payload: dict[str, Any] | str | bytes,
         headers: dict[str, Any] | None = None,
         persistent: bool = True,
+        mandatory: bool = True,
+        message_id: str | None = None,
+        correlation_id: str | None = None,
     ) -> None:
         """Publish message with publisher confirms.
         
@@ -348,7 +351,11 @@ class AMQPClient:
             routing_key: Message routing key.
             payload: Message body (dict will be JSON serialized).
             headers: Optional message headers.
+            headers: Optional message headers.
             persistent: If True, message survives broker restart.
+            mandatory: If True, message is returned if unroutable.
+            message_id: Optional unique message identifier.
+            correlation_id: Optional request-response identifier.
         
         Raises:
             AMQPPublishError: If publishing fails or times out.
@@ -357,8 +364,9 @@ class AMQPClient:
         if not self.is_ready:
             raise AMQPConnectionError("Not connected to RabbitMQ")
         
-        # Get correlation ID from request context
-        correlation_id = get_request_id() or None
+        # Get correlation ID from request context if not provided
+        if not correlation_id:
+            correlation_id = get_request_id() or None
         
         # Serialize payload
         if isinstance(payload, dict):
@@ -367,15 +375,19 @@ class AMQPClient:
         elif isinstance(payload, str):
             body = payload.encode("utf-8")
             content_type = "text/plain"
-        else:
+        elif isinstance(payload, bytes):
             body = payload
             content_type = "application/octet-stream"
+        else:
+             # Fallback for other serializable types
+             body = str(payload).encode("utf-8")
+             content_type = "text/plain"
         
         # Build message
         message = Message(
             body=body,
-            content_type=content_type,
             correlation_id=correlation_id,
+            message_id=message_id,
             headers=headers or {},
             delivery_mode=DeliveryMode.PERSISTENT if persistent else DeliveryMode.NOT_PERSISTENT,
         )
@@ -389,6 +401,7 @@ class AMQPClient:
                 amqp_exchange.publish(
                     message,
                     routing_key=routing_key,
+                    mandatory=mandatory,
                 ),
                 timeout=self._settings.publish_timeout,
             )
@@ -397,8 +410,10 @@ class AMQPClient:
                 "Message published",
                 exchange=exchange,
                 routing_key=routing_key,
-                correlation_id=correlation_id,
+                correlation_id=message.correlation_id,
+                message_id=message.message_id,
                 persistent=persistent,
+                mandatory=mandatory,
             )
             
         except asyncio.TimeoutError:
@@ -412,12 +427,14 @@ class AMQPClient:
         self,
         queue_name: str,
         timeout: float | None = None,
+        auto_ack: bool = False,
     ) -> ConsumedMessage | None:
         """Consume a single message from queue (long-polling style).
         
         Args:
             queue_name: Name of the queue to consume from.
             timeout: Maximum time to wait for a message.
+            auto_ack: If True, message is acknowledged immediately upon receipt.
         
         Returns:
             ConsumedMessage if message received, None if timeout.
@@ -448,8 +465,13 @@ class AMQPClient:
             if message is None:
                 return None
             
-            # Store message for later acknowledgment
-            self._pending_messages[message.delivery_tag] = message
+            # Use explicit ACK if auto_ack is False (default behavior kept for backward compatibility if needed)
+            if auto_ack:
+                 await message.ack()
+                 logger.info("Message auto-acknowledged", delivery_tag=message.delivery_tag)
+            else:
+                 # Store message for later acknowledgment
+                 self._pending_messages[message.delivery_tag] = message
             
             # Parse body
             try:

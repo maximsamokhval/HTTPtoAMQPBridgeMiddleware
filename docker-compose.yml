@@ -3,16 +3,15 @@ services:
   # RabbitMQ Message Broker with EDI plugins
   # ==========================================================================
   rabbitmq:
-    image: rabbitmq:3-management
-    container_name: rmq-middleware-rabbitmq
+    image: rabbitmq:4.0-management
     ports:
       - "5672:5672" # AMQP
       - "15672:15672" # Management UI
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
-    volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
+      RABBITMQ_DEFAULT_VHOST: edi
+      RABBITMQ_ERLANG_COOKIE: "rabbit_cookie_secret_123"
     healthcheck:
       test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
       interval: 10s
@@ -62,10 +61,6 @@ services:
     networks:
       - rmq-network
     restart: unless-stopped
-
-volumes:
-  rabbitmq_data:
-    driver: local
 
 networks:
   rmq-network:
