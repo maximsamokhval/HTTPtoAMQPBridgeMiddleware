@@ -30,7 +30,7 @@ def rabbitmq_container():
         return
 
     # Fallback to Testcontainers
-    with DockerContainer("rabbitmq:3.11-management-alpine") as rabbitmq:
+    with DockerContainer("rabbitmq:4.0-management") as rabbitmq:
         rabbitmq.with_exposed_ports(5672)
         rabbitmq.start()
         wait_for_logs(rabbitmq, "Server startup complete", timeout=60)
