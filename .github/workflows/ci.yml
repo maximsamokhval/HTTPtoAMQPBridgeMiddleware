@@ -14,6 +14,19 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12"]
 
+    services:
+      rabbitmq:
+        image: rabbitmq:3.11-management-alpine
+        ports:
+          - 5672:5672
+          - 15672:15672
+        # Simple healthcheck to ensure it's ready before tests start
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
     - uses: actions/checkout@v4
 
@@ -27,15 +40,15 @@ jobs:
       run: uv sync --all-extras --dev
 
     - name: Run Unit Tests
-      # We provide a dummy RABBITMQ_URL to satisfy Pydantic validation during test collection
-      # (Unit tests mock the actual connection anyway)
       run: uv run pytest tests/test_models.py tests/test_routes.py
       env:
+        # Dummy URL to satisfy Pydantic validation during collection
+        # (It points to the service container, so it's actually valid!)
         RABBITMQ_URL: "amqp://guest:guest@localhost:5672/"
         LOG_LEVEL: "DEBUG"
 
     - name: Run Integration Tests
-      # Testcontainers will provide the real URL, but we set a default to pass collection
+      # The test script will detect port 5672 is open and use the service container
       run: uv run pytest tests/test_integration.py
       env:
         RABBITMQ_URL: "amqp://guest:guest@localhost:5672/"
