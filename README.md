@@ -1,166 +1,108 @@
 # HTTP-to-AMQP Bridge Middleware
 
-Надійне, готове до продакшену middleware для інтеграції RabbitMQ (AMQP) з HTTP сервісами (наприклад, 1C:Enterprise).
+![Build Status](https://github.com/intertstarch/rmq-middleware/actions/workflows/ci.yml/badge.svg)
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
 
-## Огляд
+A robust, production-ready middleware for integrating RabbitMQ (AMQP) with HTTP services (e.g., 1C:Enterprise, ERPs, legacy systems).
 
-Це middleware діє як надійний міст між HTTP клієнтами та RabbitMQ, забезпечуючи:
-- **Публікацію (Publishing)**: HTTP POST -> RabbitMQ Exchange (Надійно)
-- **Споживання (Consuming)**: HTTP POST (Long-polling) <- RabbitMQ Queue
+[Українська версія (Ukrainian Version)](README.ua.md)
 
-## Можливості
-- **Бриджинг протоколів**: Конвертує HTTP REST запити в AMQP повідомлення.
-- **Надійність**: Використовує RabbitMQ Publisher Confirms та ручні підтвердження (acknowledgments) для гарантії доставки "At-Least-Once".
-- **Управління топологією**: Автоматично налаштовує Exchanges, Queues та Dead Letter Exchanges (DLX).
-- **Безпека**:
-  - **HTTP Basic Authentication**: Використовує стандартний механізм аутентифікації. Middleware виступає проксі, передаючи облікові дані (username/password) безпосередньо в RabbitMQ.
-  - Управління підключеннями (Connection Pooling): Автоматично створює та кешує з'єднання для кожного користувача.
-  - Обмеження частоти запитів (Rate Limiting)
-  - Валідація та санітизація вхідних даних (відповідно до OWASP)
-- **Спостережуваність (Observability)**: Структуроване JSON логування з Correlation IDs та Prometheus метрики.
-- **Валідація схеми**: Строгі Pydantic V2 моделі для надійної обробки даних.
+## Overview
 
-## Встановлення та локальна розробка
+This middleware acts as a reliable bridge between HTTP clients and RabbitMQ, ensuring:
+- **Publishing**: HTTP POST -> RabbitMQ Exchange (Reliable, At-Least-Once)
+- **Consuming**: HTTP POST (Long-polling) <- RabbitMQ Queue
 
-### Передумови
+## Key Features
+
+- **Protocol Bridging**: Converts HTTP REST requests into AMQP messages.
+- **Reliability**: Uses RabbitMQ Publisher Confirms and manual Acknowledgments to guarantee "At-Least-Once" delivery.
+- **Topology Management**: Automatically sets up Exchanges, Queues, and Dead Letter Exchanges (DLX).
+- **Security**:
+  - **HTTP Basic Authentication**: Proxies credentials directly to RabbitMQ.
+  - **Connection Pooling**: Manages efficient user sessions with auto-cleanup.
+  - **Rate Limiting** & **Input Validation** (OWASP standards).
+- **Observability**: Structured JSON logging with Correlation IDs and Prometheus metrics.
+- **Strict Schema**: Pydantic V2 models for reliable data handling.
+
+## ⚠️ Security Notice (Production Deployment)
+
+This service uses **HTTP Basic Authentication**.
+
+> **CRITICAL**: Do NOT expose this service directly to the internet. You **MUST** deploy it behind a Reverse Proxy (Nginx, Traefik, AWS ALB) configured with **HTTPS (TLS)**.
+> Sending credentials (username/password) over plain HTTP is insecure.
+
+## Installation & Local Development
+
+### Prerequisites
 - Python 3.11+
-- [uv](https://github.com/astral-sh/uv) (рекомендовано) або pip
-- Docker та Docker Compose
+- [uv](https://github.com/astral-sh/uv) (recommended) or pip
+- Docker & Docker Compose
 
-### Налаштування
-1. Клонуйте репозиторій:
+### Setup
+1. Clone the repository:
    ```bash
    git clone <repo-url>
    cd rmq_middleware
    ```
 
-2. Встановіть залежності:
+2. Install dependencies:
    ```bash
    uv sync
    ```
 
-3. Запустіть юніт-тести:
+3. Run tests (including integration tests with Testcontainers):
    ```bash
    uv run pytest
    ```
 
-## Розгортання (Deployment)
+## Deployment
 
-### Docker Compose (Рекомендовано)
+### Docker Compose (Recommended)
 
-1. Створіть файл `.env` (див. приклад у `.env.example`).
-2. Запустіть сервіси:
+1. Create a `.env` file (see `.env.example`).
+2. Start services:
    ```bash
    docker-compose up -d
    ```
-3. Перевірте статус (Health check):
+3. Check health status:
    ```bash
    curl http://localhost:8000/health
    ```
 
-## Поведінка системи та Життєвий цикл повідомлень (Message Lifecycle)
+## Message Lifecycle & Behavior
 
-### Обробка повідомлень та Timeout
+### Payload Serialization
+The middleware attempts to handle message bodies intelligently:
+1.  **JSON**: If the message content-type is `application/json` or the body is valid JSON, it is deserialized into a Dictionary/List.
+2.  **String**: If JSON parsing fails, it attempts to decode as a UTF-8 string.
+3.  **Hex**: If UTF-8 decoding fails (binary data), the body is returned as a Hexadecimal string.
 
-Важливо розуміти, як система поводиться з повідомленнями, які були отримані (`fetch`), але не підтверджені (`ack`).
+### Unacked Messages & Timeouts
 
-1.  **Отримання повідомлення (`Fetch`)**:
-    *   Параметр `timeout` у запиті `/v1/fetch` визначає час очікування **надходження** повідомлення в чергу. Це не час на обробку.
-    *   Якщо повідомлення отримано з `auto_ack: false`, воно отримує статус `Unacked` в RabbitMQ.
-    *   Повідомлення залишається "заблокованим" за поточною сесією користувача і невидимим для інших споживачів.
+1.  **Fetch Timeout**: The `timeout` parameter in `/v1/fetch` defines how long to wait for a message to *arrive*. It is NOT the processing time.
+2.  **Unacked State**: When a message is fetched with `auto_ack: false`, it enters the `Unacked` state in RabbitMQ and is locked to the current user session.
+3.  **Session Cleanup**: If a client crashes without sending an Ack/Reject, the middleware will automatically close the idle connection after **5 minutes**. Only then will RabbitMQ return the message to the queue for other consumers.
 
-2.  **Якщо клієнт "зник" (не надіслав Ack/Reject)**:
-    *   Повідомлення **НЕ повертається** в чергу миттєво після завершення HTTP-запиту.
-    *   Middleware тримає AMQP-з'єднання відкритим (Connection Pooling) для оптимізації продуктивності.
-    *   RabbitMQ вважає, що клієнт все ще обробляє повідомлення.
+**Client Recommendations:**
+*   **Success**: Always send `POST /v1/ack/{tag}`.
+*   **Failure**: Send `POST /v1/reject/{tag}` (use `requeue: true` to retry, or `false` for DLX).
 
-3.  **Повернення повідомлення в чергу (Redelivery)**:
-    *   Повідомлення повернеться в чергу і стане доступним іншим споживачам лише у двох випадках:
-        1.  **Явна відмова**: Виклик `/v1/reject/{tag}` з `requeue: true`.
-        2.  **Таймаут сесії**: Middleware автоматично закриває неактивні з'єднання через **5 хвилин** (idle timeout). В цей момент RabbitMQ детектить розрив з'єднання і повертає всі `Unacked` повідомлення в чергу.
+## API Reference
 
-### Рекомендації для клієнтів
+| Endpoint | Method | Description | Auth |
+|----------|-------|------|------|
+| `/v1/publish` | POST | Publish message (Strict Schema) | Basic |
+| `/v1/fetch` | POST | Consume message (Long-polling) | Basic |
+| `/v1/ack/{tag}` | POST | Acknowledge message | Basic |
+| `/v1/reject/{tag}` | POST | Reject message | Basic |
+| `/health` | GET | Liveness probe | None |
+| `/ready` | GET | Readiness probe | None |
 
-*   **Успішна обробка**: Завжди надсилайте `/v1/ack/{tag}` після обробки.
-*   **Помилка обробки**: Надсилайте `/v1/reject/{tag}`. Використовуйте `requeue: true`, якщо хочете спробувати знову, або `false` (за замовчуванням), щоб відправити в DLX (Dead Letter Exchange).
-*   **Аварійне завершення**: Якщо ваш сервіс впав до відправки підтвердження, повідомлення буде автоматично розблоковано через 5 хвилин.
+## Python Usage Example
 
-## Архітектура
-
-### Діаграма класів (Class Diagram)
-
-```mermaid
-classDiagram
-    class AMQPClient {
-        +get_instance() AMQPClient
-        +publish(exchange, routing_key, payload, credentials)
-        +consume_one(queue, timeout, credentials)
-        +acknowledge(delivery_tag, credentials)
-    }
-    
-    class UserSession {
-        +connection: AbstractConnection
-        +publisher_channel: AbstractChannel
-        +consumer_channel: AbstractChannel
-        +pending_messages: Dict
-        +last_used: float
-    }
-
-    class AMQPConnectionManager {
-        -sessions: Dict[str, UserSession]
-        +_get_session(credentials)
-    }
-
-    class PublishRequest {
-        +exchange: str
-        +routing_key: str
-        +payload: Dict
-        +mandatory: bool
-        +persistence: int
-    }
-    
-    class FetchRequest {
-        +queue: str
-        +timeout: int
-        +auto_ack: bool
-    }
-
-    AMQPClient *-- UserSession : manages
-    AMQPClient ..> PublishRequest : uses
-```
-
-### Діаграма послідовності: Публікація (Sequence Diagram)
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant API as Middleware API
-    participant AMQP as RabbitMQ
-    
-    Client->>API: POST /v1/publish (Basic Auth: user:pass)
-    API->>API: Валідація запиту
-    API->>API: Отримання сесії (Connection Pool)
-    alt Сесія існує
-        API->>API: Використання існуючого з'єднання
-    else Нова сесія
-        API->>AMQP: Connect (user/pass)
-        AMQP-->>API: Connected
-    end
-    API->>AMQP: Basic.Publish (Confirm Mode)
-    alt Успіх
-        AMQP-->>API: Ack
-        API-->>Client: 202 Accepted
-    else Помилка/Тайм-аут
-        AMQP-->>API: Nack / No Response
-        API-->>Client: 503 Service Unavailable
-    end
-```
-
-## Приклади використання (Python)
-
-### 1. Публікація повідомлення
-
-Middleware використовує **HTTP Basic Auth**. Ви повинні надати ім'я користувача та пароль, які зареєстровані в RabbitMQ. Middleware підключиться від імені цього користувача.
+### Publishing
 
 ```python
 import requests
@@ -172,118 +114,15 @@ auth = HTTPBasicAuth('my_rmq_user', 'my_secret_pass')
 payload = {
     "exchange": "enterprise.core",
     "routing_key": "order.created",
-    "payload": {
-        "order_id": 12345,
-        "amount": 99.99
-    },
+    "payload": {"id": 123},
     "persistent": True,
     "mandatory": True
 }
 
-response = requests.post(url, json=payload, auth=auth)
-print(response.status_code) # 202
-print(response.json())
+resp = requests.post(url, json=payload, auth=auth)
+print(resp.status_code) # 202
 ```
 
-### 2. Отримання повідомлення (Long-Polling)
+## License
 
-```python
-import requests
-from requests.auth import HTTPBasicAuth
-
-url = "http://localhost:8000/v1/fetch"
-auth = HTTPBasicAuth('my_rmq_user', 'my_secret_pass')
-
-payload = {
-    "queue": "orders.queue",
-    "timeout": 10,
-    "auto_ack": False 
-}
-
-response = requests.post(url, json=payload, auth=auth)
-
-if response.status_code == 200:
-    msg = response.json()
-    print("Отримано:", msg["body"])
-    
-    # Підтвердження обробки (Acknowledgment)
-    ack_url = f"http://localhost:8000/v1/ack/{msg['delivery_tag']}"
-    requests.post(ack_url, auth=auth)
-    
-elif response.status_code == 204:
-    print("Черга порожня")
-```
-
-## Довідник API (API Reference)
-
-| Ендпоінт | Метод | Опис | Auth |
-|----------|-------|------|------|
-| `/v1/publish` | POST | Публікація повідомлення | Basic |
-| `/v1/fetch` | POST | Отримання повідомлення (Long-polling) | Basic |
-| `/v1/ack/{tag}` | POST | Підтвердження повідомлення (Ack) | Basic |
-| `/v1/reject/{tag}` | POST | Відхилення повідомлення (Reject) | Basic |
-| `/health` | GET | Перевірка працездатності (Liveness) | None |
-| `/ready` | GET | Перевірка готовності (Readiness) | None |
-
-## Формат запитів до API
-
-### 1. Публікація повідомлення (Publisher)
-
-**Ендпоінт:** `POST /v1/publish`
-
-Цей ендпоінт приймає JSON-об'єкт для публікації повідомлення в RabbitMQ.
-
-#### Мінімальний приклад
-
-```json
-{
-  "exchange": "edi.internal.topic",
-  "routing_key": "erp.order.created.v1",
-  "payload": {
-    "orderId": "ORD-12345",
-    "amount": 150.75,
-    "currency": "UAH"
-  }
-}
-```
-
-#### Опис полів
-
-| Поле | Тип | Опис | Обов'язкове | За замовчуванням |
-|---|---|---|---|---|
-| `exchange` | `string` | Назва обмінника (exchange) в RabbitMQ. | Так | - |
-| `routing_key` | `string` | Ключ маршрутизації для направлення повідомлення. | Так | - |
-| `payload` | `object` \| `string` | Тіло повідомлення. Може бути JSON-об'єктом або рядком. | Так | - |
-| `mandatory` | `boolean` | Якщо `true`, брокер поверне помилку, якщо повідомлення неможливо нікуди направити. | Ні | `true` |
-| `persistence` | `integer` | Режим доставки. `2` = Persistent (зберегти на диск), `1` = Transient (зберігати в пам'яті). | Ні | `2` |
-| `priority` | `integer` | Пріоритет повідомлення (0-255). | Ні | `0` |
-| `correlation_id` | `string` | Ідентифікатор для кореляції запитів та відповідей (корисно для трасування). | Ні | `null` |
-| `message_id` | `string` | Унікальний ідентифікатор повідомлення. Може використовуватись для дедуплікації. | Ні | `null` |
-| `headers` | `object` | Додаткові заголовки повідомлення (ключ-значення). | Ні | `null` |
-
-### 2. Отримання повідомлення (Consumer)
-
-**Ендпоінт:** `POST /v1/fetch`
-
-Цей ендпоінт працює в режимі long-polling, очікуючи на повідомлення з вказаної черги.
-
-#### Приклад запиту
-
-```json
-{
-  "queue": "q.erp_central.inbox",
-  "timeout": 15,
-  "auto_ack": false
-}
-```
-
-## Налаштування (Configuration)
-
-Дивіться `.env.example` для детальної конфігурації. Основні змінні:
-- `RABBITMQ_URL`: Рядок підключення AMQP (використовується як системний для перевірки здоров'я).
-- `RABBITMQ_PREFETCH_COUNT`: Налаштування QoS.
-- **Примітка:** `API_KEY` більше не використовується. Аутентифікація відбувається через Basic Auth заголовки запиту.
-
-## Вирішення проблем (Troubleshooting)
-
-Для детальних інструкцій з експлуатації, моніторингу та обробки збоїв, дивіться [Керівництво Оператора](docs/operators_guide.md).
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
