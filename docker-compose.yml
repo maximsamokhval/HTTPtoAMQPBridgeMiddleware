@@ -3,21 +3,10 @@ services:
   # RabbitMQ Message Broker with EDI plugins
   # ==========================================================================
   rabbitmq:
-    image: rabbitmq:4.0-management
+    image: rabbitmq:3-management
     ports:
       - "5672:5672" # AMQP
       - "15672:15672" # Management UI
-    environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
-      RABBITMQ_DEFAULT_VHOST: edi
-      RABBITMQ_ERLANG_COOKIE: "rabbit_cookie_secret_123"
-    healthcheck:
-      test: [ "CMD", "rabbitmq-diagnostics", "-q", "ping" ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
     networks:
       - rmq-network
 
@@ -34,7 +23,7 @@ services:
     environment:
       # ⚠️ SECURITY WARNING: Use secrets management in production (Docker secrets, Vault, etc.)
       # Never commit real credentials to version control
-      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/edi
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
       RABBITMQ_PREFETCH_COUNT: 10
       RETRY_ATTEMPTS: 5
       RETRY_BASE_DELAY: 1.0
@@ -50,8 +39,7 @@ services:
       # API_KEY: "set-via-secrets-manager"
       RATE_LIMIT_ENABLED: "false"
     depends_on:
-      rabbitmq:
-        condition: service_healthy
+      - rabbitmq
     healthcheck:
       test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" ]
       interval: 10s

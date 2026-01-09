@@ -39,9 +39,9 @@ class Settings(BaseSettings):
     
     # Retry Configuration
     retry_attempts: int = Field(
-        default=5,
+        default=60,
         ge=1,
-        le=20,
+        le=120,
         description="Maximum connection retry attempts",
     )
     retry_base_delay: float = Field(

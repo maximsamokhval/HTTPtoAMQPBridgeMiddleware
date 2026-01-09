@@ -24,57 +24,9 @@ from rmq_middleware.middleware import RequestIDMiddleware, setup_logging, get_re
 from rmq_middleware.routes import router
 from rmq_middleware.security import SecurityHeadersMiddleware
 
-import urllib.request
-import urllib.error
-import urllib.parse
-import json
 
-async def check_and_create_vhost(rabbitmq_url: str) -> None:
-    """Ensure vhost and permissions exist via Management API."""
-    try:
-        parsed = urllib.parse.urlparse(rabbitmq_url)
-        host = parsed.hostname or "localhost"
-        mgmt_port = 15672  # Assumes standard management port mapping
-        username = parsed.username or "guest"
-        password = parsed.password or "guest"
-        vhost = parsed.path.lstrip("/")
-        
-        if not vhost:
-            return
 
-        base_url = f"http://{host}:{mgmt_port}/api"
-        
-        # Setup Auth
-        password_mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
-        password_mgr.add_password(None, base_url, username, password)
-        handler = urllib.request.HTTPBasicAuthHandler(password_mgr)
-        opener = urllib.request.build_opener(handler)
-        
-        # 1. Create Vhost
-        logger.info(f"Checking vhost '{vhost}' via HTTP API...")
-        vhost_url = f"{base_url}/vhosts/{vhost}"
-        req = urllib.request.Request(vhost_url, method='PUT')
-        try:
-            with opener.open(req) as resp:
-                if resp.status in (201, 204):
-                    logger.info(f"Vhost '{vhost}' verified/created.")
-        except urllib.error.HTTPError as e:
-             logger.warning(f"Failed to create vhost: {e}")
 
-        # 2. Set Permissions
-        perm_url = f"{base_url}/permissions/{vhost}/{username}"
-        payload = json.dumps({"configure": ".*", "write": ".*", "read": ".*"}).encode('utf-8')
-        req = urllib.request.Request(perm_url, data=payload, method='PUT')
-        req.add_header('Content-Type', 'application/json')
-        try:
-            with opener.open(req) as resp:
-                if resp.status in (201, 204):
-                    logger.info(f"Permissions set for user '{username}'.")
-        except urllib.error.HTTPError as e:
-             logger.warning(f"Failed to set permissions: {e}")
-             
-    except Exception as e:
-        logger.error(f"Vhost initialization execution failed: {e}")
 
 
 # Global shutdown event
@@ -99,11 +51,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         rabbitmq_url=settings.rabbitmq_url_masked,
     )
     
-    # Ensure vhost exists (Cold start support)
-    try:
-        await check_and_create_vhost(settings.rabbitmq_url_str)
-    except Exception as e:
-        logger.warning(f"Vhost check failed (ignoring): {e}")
+
 
     # Connect to RabbitMQ
     client = await AMQPClient.get_instance()
