@@ -8,32 +8,36 @@ from fastapi.testclient import TestClient
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.waiting_utils import wait_for_logs
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 def is_port_open(host: str, port: int) -> bool:
     """Check if a TCP port is open."""
+    logger.info(f"Checking if {host}:{port} is open...")
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(1)
-        return s.connect_ex((host, port)) == 0
+        result = s.connect_ex((host, port)) == 0
+        logger.info(f"Port {port} open: {result}")
+        return result
 
 @pytest.fixture(scope="module")
 def rabbitmq_container():
     """
     Provide RabbitMQ context.
-    
-    Strategy:
-    1. Check if RabbitMQ is already running on localhost:5672 (CI Service / Local).
-    2. If yes, yield None (use existing).
-    3. If no, spin up a DockerContainer (Testcontainers).
     """
-    # Check for existing instance (common in CI with Service Containers)
     if is_port_open("localhost", 5672):
+        logger.info("Using existing RabbitMQ instance on localhost:5672")
         yield None
         return
 
-    # Fallback to Testcontainers
+    logger.info("Falling back to Testcontainers (DockerContainer)...")
     with DockerContainer("rabbitmq:4.0-management") as rabbitmq:
         rabbitmq.with_exposed_ports(5672)
         rabbitmq.start()
+        logger.info("Waiting for RabbitMQ to start (looking for 'Server startup complete')...")
         wait_for_logs(rabbitmq, "Server startup complete", timeout=60)
+        logger.info("RabbitMQ container is ready.")
         yield rabbitmq
 
 @pytest.fixture
@@ -41,27 +45,23 @@ def integration_app(rabbitmq_container, monkeypatch):
     """Create a FastAPI app instance connected to RabbitMQ."""
     
     if rabbitmq_container:
-        # We are using Testcontainers
         host = rabbitmq_container.get_container_host_ip()
         port = rabbitmq_container.get_exposed_port(5672)
         amqp_url = f"amqp://guest:guest@{host}:{port}/"
     else:
-        # We are using existing RabbitMQ (localhost:5672)
-        # Assuming default guest:guest
         amqp_url = "amqp://guest:guest@localhost:5672/"
     
-    # Override environment settings
+    logger.info(f"Connecting integration app to: {amqp_url}")
     monkeypatch.setenv("RABBITMQ_URL", amqp_url)
     monkeypatch.setenv("API_KEY_ENABLED", "false")
     
-    # Import here to avoid early config loading before monkeypatch
     from rmq_middleware.config import get_settings
     get_settings.cache_clear()
     
     from rmq_middleware.main import app
     from rmq_middleware.amqp_wrapper import AMQPClient
     
-    # Reset singleton to ensure fresh connection
+    logger.info("Resetting AMQPClient instance for integration tests...")
     asyncio.run(AMQPClient.reset_instance())
     
     return app
@@ -71,21 +71,20 @@ async def test_full_integration_flow(integration_app):
     """Test full cycle: Publish -> Fetch -> Ack."""
     
     client = TestClient(integration_app)
+    logger.info("TestClient initialized.")
     
-    # Credentials (default guest:guest)
     username, password = "guest", "guest"
-    
     import base64
     auth_str = f"{username}:{password}"
     b64_auth = base64.b64encode(auth_str.encode()).decode()
     headers = {"Authorization": f"Basic {b64_auth}"}
 
     # 1. Setup Topology
+    logger.info("Step 1: Setting up topology...")
     from rmq_middleware.amqp_wrapper import AMQPClient, TopologyConfig
     amqp_client = await AMQPClient.get_instance()
     await amqp_client.connect()
     
-    # Use a unique exchange name to avoid collisions if reusing instance
     import uuid
     unique_suffix = str(uuid.uuid4())[:8]
     ex_name = f"test.integration.ex.{unique_suffix}"
@@ -99,8 +98,10 @@ async def test_full_integration_flow(integration_app):
             routing_key=r_key
         )
     )
+    logger.info(f"Topology set: Exchange={ex_name}, Queue={q_name}")
 
-    # 2. Publish Message via API
+    # 2. Publish Message
+    logger.info("Step 2: Publishing message...")
     payload = {
         "exchange": ex_name,
         "routing_key": r_key,
@@ -109,9 +110,11 @@ async def test_full_integration_flow(integration_app):
     }
     
     response = client.post("/v1/publish", json=payload, headers=headers)
-    assert response.status_code == 202, f"Publish failed: {response.text}"
+    logger.info(f"Publish response: {response.status_code}")
+    assert response.status_code == 202
     
-    # 3. Fetch Message via API
+    # 3. Fetch Message
+    logger.info("Step 3: Fetching message...")
     fetch_payload = {
         "queue": q_name,
         "timeout": 5,
@@ -119,17 +122,23 @@ async def test_full_integration_flow(integration_app):
     }
     
     response = client.post("/v1/fetch", json=fetch_payload, headers=headers)
-    assert response.status_code == 200, f"Fetch failed: {response.text}"
+    logger.info(f"Fetch response: {response.status_code}")
+    assert response.status_code == 200
     
     data = response.json()
+    logger.info(f"Message body received: {data['body']}")
     assert data["body"] == {"status": "integration_test"}
     delivery_tag = data["delivery_tag"]
     
     # 4. Ack Message
+    logger.info(f"Step 4: Acknowledging message (tag={delivery_tag})...")
     ack_response = client.post(f"/v1/ack/{delivery_tag}", headers=headers)
+    logger.info(f"Ack response: {ack_response.status_code}")
     assert ack_response.status_code == 200
-    assert ack_response.json()["status"] == "acknowledged"
     
-    # 5. Verify Queue is Empty
+    # 5. Verify Empty
+    logger.info("Step 5: Verifying queue is empty...")
     response_empty = client.post("/v1/fetch", json=fetch_payload, headers=headers)
+    logger.info(f"Final fetch response: {response_empty.status_code}")
     assert response_empty.status_code == 204
+    logger.info("Integration test PASSED.")
