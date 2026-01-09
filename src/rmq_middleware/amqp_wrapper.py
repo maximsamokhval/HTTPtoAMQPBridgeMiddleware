@@ -166,6 +166,24 @@ class AMQPClient:
                 await cls._instance.shutdown()
                 cls._instance = None
 
+    @property
+    def is_connected(self) -> bool:
+        """Check if system connection is established."""
+        return (
+            self._system_session is not None
+            and self._system_session.connection is not None
+            and not self._system_session.connection.is_closed
+        )
+
+    @property
+    def is_ready(self) -> bool:
+        """Check if system session is ready (channels open)."""
+        return (
+            self.is_connected
+            and self._system_session.publisher_channel is not None
+            and not self._system_session.publisher_channel.is_closed
+        )
+
     def _start_cleanup_task(self):
         """Start background task to clean up idle sessions."""
         self._cleanup_task = asyncio.create_task(self._cleanup_loop())
