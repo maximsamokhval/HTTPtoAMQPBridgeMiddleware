@@ -155,6 +155,7 @@ async def publish_message(
             mandatory=body.mandatory,
             message_id=body.message_id,
             correlation_id=body.correlation_id,
+            priority=body.priority,
         )
         
         return PublishResponse(

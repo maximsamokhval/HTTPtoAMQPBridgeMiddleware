@@ -172,10 +172,24 @@ def setup_logging() -> None:
             diagnose=True,
         )
     
+    # Configure file logging if enabled
+    if settings.log_file:
+        logger.add(
+            settings.log_file,
+            rotation=settings.log_rotation,
+            retention=settings.log_retention,
+            level=settings.log_level,
+            format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {extra[request_id]} | {name}:{function}:{line} - {message}" if settings.log_format == "text" else "{message}",
+            serialize=True if settings.log_format == "json" else False,
+            backtrace=True,
+            diagnose=False,
+        )
+
     logger.info(
         "Logging configured",
         level=settings.log_level,
         format=settings.log_format,
+        log_file=settings.log_file,
     )
 
 

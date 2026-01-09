@@ -53,6 +53,7 @@ class TestPublishRoute:
         assert call_args["exchange"] == "test.ex"
         assert call_args["payload"] == {"msg": "hello"}
         assert call_args["persistent"] is True  # Default
+        assert call_args["priority"] == 0  # Default
 
     def test_publish_validation_error(self, mock_amqp, override_settings):
         """Test validation error (missing field)."""

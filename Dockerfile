@@ -25,7 +25,9 @@ FROM python:3.11-slim AS runtime
 
 # Security: Run as non-root user
 RUN groupadd --gid 1000 appgroup && \
-    useradd --uid 1000 --gid appgroup --shell /bin/bash --create-home appuser
+    useradd --uid 1000 --gid appgroup --shell /bin/bash --create-home appuser && \
+    mkdir -p /var/log/rmq-middleware && \
+    chown -R appuser:appgroup /var/log/rmq-middleware
 
 # Set working directory
 WORKDIR /app

@@ -73,6 +73,18 @@ class TestPublishRequest:
         with pytest.raises(ValidationError):
             PublishRequest(**data)
 
+    @pytest.mark.parametrize("priority", [-1, 256])
+    def test_priority_bounds(self, priority):
+        """Test priority boundaries (0-255)."""
+        data = {
+            "exchange": "ex",
+            "routing_key": "rk",
+            "payload": {},
+            "priority": priority,
+        }
+        with pytest.raises(ValidationError):
+            PublishRequest(**data)
+
 
 class TestFetchRequest:
     """Tests for FetchRequest model."""

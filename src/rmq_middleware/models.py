@@ -29,6 +29,7 @@ class PublishRequest(BaseModel):
     correlation_id: Optional[str] = Field(None, description="Request-Response identifier")
     message_id: Optional[str] = Field(None, description="Unique message ID for deduplication")
     headers: Optional[Dict[str, str]] = Field(None, description="Custom AMQP headers")
+    priority: int = Field(default=0, ge=0, le=255, description="Message priority (0-255)")
 
 
 class FetchRequest(BaseModel):

@@ -219,6 +219,7 @@ elif response.status_code == 204:
   "payload": "Це повідомлення у вигляді простого рядка",
   "mandatory": true,
   "persistence": 1,
+  "priority": 5,
   "correlation_id": "req-abc-789",
   "message_id": "uuid-xyz-123-unique",
   "headers": {
@@ -237,6 +238,7 @@ elif response.status_code == 204:
 | `payload` | `object` \| `string` | Тіло повідомлення. Може бути JSON-об'єктом або рядком. | Так | - |
 | `mandatory` | `boolean` | Якщо `true`, брокер поверне помилку, якщо повідомлення неможливо нікуди направити. | Ні | `true` |
 | `persistence` | `integer` | Режим доставки. `2` = Persistent (зберегти на диск), `1` = Transient (зберігати в пам'яті). | Ні | `2` |
+| `priority` | `integer` | Пріоритет повідомлення (0-255). | Ні | `0` |
 | `correlation_id` | `string` | Ідентифікатор для кореляції запитів та відповідей (корисно для трасування). | Ні | `null` |
 | `message_id` | `string` | Унікальний ідентифікатор повідомлення. Може використовуватись для дедуплікації. | Ні | `null` |
 | `headers` | `object` | Додаткові заголовки повідомлення (ключ-значення). | Ні | `null` |

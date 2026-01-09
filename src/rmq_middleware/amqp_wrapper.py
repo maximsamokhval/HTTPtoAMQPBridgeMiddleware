@@ -343,6 +343,7 @@ class AMQPClient:
         mandatory: bool = True,
         message_id: str | None = None,
         correlation_id: str | None = None,
+        priority: int = 0,
     ) -> None:
         """Publish message with publisher confirms.
         
@@ -356,6 +357,7 @@ class AMQPClient:
             mandatory: If True, message is returned if unroutable.
             message_id: Optional unique message identifier.
             correlation_id: Optional request-response identifier.
+            priority: Message priority (0-255).
         
         Raises:
             AMQPPublishError: If publishing fails or times out.
@@ -390,6 +392,7 @@ class AMQPClient:
             message_id=message_id,
             headers=headers or {},
             delivery_mode=DeliveryMode.PERSISTENT if persistent else DeliveryMode.NOT_PERSISTENT,
+            priority=priority,
         )
         
         try:
@@ -414,6 +417,7 @@ class AMQPClient:
                 message_id=message.message_id,
                 persistent=persistent,
                 mandatory=mandatory,
+                priority=priority,
             )
             
         except asyncio.TimeoutError:

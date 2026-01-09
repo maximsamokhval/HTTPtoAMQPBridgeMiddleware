@@ -74,6 +74,18 @@ class Settings(BaseSettings):
         default="json",
         description="Log output format (json for production, text for development)",
     )
+    log_file: str | None = Field(
+        default=None,
+        description="Path to log file. If None, logs only to stdout.",
+    )
+    log_rotation: str = Field(
+        default="500 MB",
+        description="Log rotation condition (size, time, etc.)",
+    )
+    log_retention: str = Field(
+        default="10 days",
+        description="Log retention duration",
+    )
     
     # Application Settings
     app_name: str = Field(

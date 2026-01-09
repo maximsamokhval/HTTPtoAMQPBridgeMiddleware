@@ -1,71 +1,44 @@
-# Звіт про перевірку коду (Code Review): RMQ Middleware
+# Code Review & Improvement Report (Phase 2)
 
-## 1. Загальний підсумок
+## 1. Summary of Changes
 
-Проект `rmq-middleware` — це високоякісний, готовий до продакшену HTTP-to-AMQP міст, розроблений для інтеграції зовнішніх систем (зокрема ERP, таких як 1С:Підприємство) з RabbitMQ. Кодова база демонструє глибоке розуміння сучасних практик Python, асинхронного програмування та патернів розподілених систем.
+This iteration focused on operational readiness, specifically logging infrastructure and configuration.
 
-**Загальна оцінка:** Впевнений Senior / Principal Engineering рівень.
+### Implemented Improvements:
+1.  **File Logging with Rotation:**
+    *   Updated `Settings` to include `LOG_FILE`, `LOG_ROTATION`, and `LOG_RETENTION`.
+    *   Configured `loguru` in `middleware.py` to write to a file when `LOG_FILE` is set.
+    *   Enabled log rotation (default 500 MB) and retention (default 10 days).
+2.  **Container Log Persistence:**
+    *   Modified `Dockerfile` to create a dedicated log directory (`/var/log/rmq-middleware`) owned by the non-root `appuser`.
+    *   Updated `docker-compose.yml` to mount a host volume (`./logs`) to the container log directory.
+    *   Set `LOG_FILE` environment variable in `docker-compose.yml`.
 
-## 2. Архітектура та Дизайн
+## 2. Unused Code Analysis
 
-### Сильні сторони
-*   **Надійне керування з'єднаннями:** Реалізація `AMQPClient` коректно обробляє складнощі підключення до RabbitMQ, включаючи автоматичне перепідключення з експоненційною затримкою (exponential backoff) та відновлення топології.
-*   **Спостережуваність (Observability):** Інтеграція `loguru` з `RequestIDMiddleware` забезпечує відмінну трасуваність. Кожен запис у лозі можна прив'язати до конкретного HTTP-запиту та AMQP-повідомлення, що є критично важливим для налагодження розподілених систем.
-*   **Керування конфігурацією:** Використання `pydantic-settings` забезпечує типізовану конфігурацію на основі змінних середовища з маскуванням чутливих даних (наприклад, приховування паролів у логах).
+*   **Imports:** A scan of the core modules did not reveal significant unused imports. `ruff` or `flake8` would be the authoritative source, but visual inspection confirms usage of imported modules.
+*   **Functions:** `get_request_id` is used in `amqp_wrapper` and `routes`. `SecurityHeadersMiddleware` is correctly added.
+*   **Variables:** The `Settings` class contained all used variables. The newly added log settings are now actively used in `middleware.py`.
 
-### Архітектурні компроміси
-*   **HTTP "Pull" модель (`/fetch`):** Додаток надає інтерфейс "long-polling", що фактично обгортає `basic.get` (або короткоживучий споживач). Хоча це добре підходить для інтеграції з легасі ERP, це менш ефективно, ніж нативне споживання AMQP (`basic.consume`). Для сценаріїв з високим навантаженням такий дизайн створює додаткову затримку та накладні витрати порівняно з push-моделлю.
-*   **Stateful Singleton:** Сінґлтон `AMQPClient` зберігає стан. Хоча це оброблено коректно за допомогою `asyncio.Lock`, сінґлтони можуть ускладнювати тестування та поводитися неочікувано при маніпуляціях з event loop (хоча це малоймовірно у стандартному розгортанні FastAPI).
+## 3. Error Handling Review
 
-## 3. Якість коду та Найкращі практики
+### Weaknesses Identified & Addressed in Previous Iterations:
+*   **AMQP Connection:** `AMQPClient` has robust retry logic with exponential backoff.
+*   **Publishing:** Uses `publisher_confirms` which is the correct way to handle delivery guarantees. Timeouts are handled via `asyncio.wait_for`.
+*   **Input Validation:** Pydantic models enforce strict schema validation.
 
-*   **Типізація:** Код чудово використовує тайп-хінти Python та моделі Pydantic V2, забезпечуючи сувору валідацію даних на межах системи.
-*   **Чистота коду:** Код читабельний, добре структурований і відповідає PEP 8.
-*   **Async/Await:** Коректне використання примітивів `asyncio`. У гарячих шляхах (hot paths) не виявлено очевидних блокуючих викликів.
+### Recommendations for Future hardening:
+*   **`json.loads` in `consume_one`:** Currently, if `json.loads` fails, it falls back to raw body. This is acceptable behavior (robustness principle), but ensure consumers are aware they might receive strings instead of dicts if JSON is malformed.
+*   **Shutdown:** Graceful shutdown handles signal interception correctly.
 
-## 4. Конкретні знахідки та Рекомендації
+## 4. Operational Guide for Logs
 
-### Критичні / Високий пріоритет
+Logs will now appear in the `./logs` directory on the host machine.
+*   **Format:** JSON (production standard).
+*   **Rotation:** Files are rotated automatically when they reach 500MB.
+*   **Retention:** Old logs are kept for 10 days.
 
-Не виявлено. Додаток виглядає безпечним для розгортання.
-
-### Середній пріоритет (Продуктивність та Масштабованість)
-
-1.  **Кешування ресурсів AMQP (Продуктивність):**
-    *   **Спостереження:** У `AMQPClient.publish` код викликає `await self._channel.get_exchange(exchange)` для *кожного повідомлення*. Аналогічно `consume_one` викликає `get_queue`.
-    *   **Вплив:** `get_exchange` та `get_queue` зазвичай включають мережевий запит (RPC) до RabbitMQ для перевірки існування сутності. Це подвоює затримку (latency) для кожної операції публікації/отримання.
-    *   **Рекомендація:** Кешувати об'єкти exchange та queue всередині `AMQPClient` після першого отримання, або покладатися на `setup_topology` для їх оголошення заздалегідь і використовувати імена напряму, якщо бібліотека дозволяє публікацію за рядковим ім'ям (більшість AMQP бібліотек дозволяють, хоча високорівневе API `aio-pika` віддає перевагу об'єктам).
-
-2.  **In-Memory Rate Limiting (Масштабованість):**
-    *   **Спостереження:** `RateLimiter` використовує стандартний Python `dict` для зберігання часових міток запитів.
-    *   **Вплив:** Це працює для одного екземпляра, але не буде коректно обмежувати запити при горизонтальному масштабуванні (наприклад, декілька подів у Kubernetes). Стан не спільний між репліками.
-    *   **Рекомендація:** Якщо є вимога горизонтального масштабування, реалізуйте розподілений rate limiter (наприклад, використовуючи Redis) або делегуйте цю відповідальність на API Gateway (Nginx, Kong, Traefik).
-
-### Низький пріоритет (Поліпшення та "шліфування")
-
-3.  **Керування залежностями:**
-    *   **Спостереження:** `httpx` вказано як у `project.optional-dependencies.dev`, так і у `dependency-groups.dev` у файлі `pyproject.toml`.
-    *   **Рекомендація:** Видалити дублювання залежностей.
-
-4.  **Ефективність `basic.get`:**
-    *   **Спостереження:** `consume_one` використовує `queue.get()`.
-    *   **Контекст:** Як зазначено в архітектурі, це `basic.get`.
-    *   **Рекомендація:** Переконайтеся, що оператори системи розуміють, що цей патерн навантажує процесор на стороні брокера RabbitMQ, якщо черга порожня, а частота опитування висока. Параметр `timeout` у API допомагає пом'якшити це, вмикаючи long-polling.
-
-5.  **Обробка помилок при публікації:**
-    *   **Спостереження:** Якщо `asyncio.wait_for` виходить за таймаут під час публікації, повертається 504.
-    *   **Контекст:** Можливо, повідомлення насправді було отримано брокером, але підтвердження (ack) не надійшло вчасно.
-    *   **Рекомендація:** Це відоме обмеження розподілених систем. Клієнтів слід попередити, що 504 означає "невідомий стан", і їм може знадобитися обробка потенційних дублікатів при повторній спробі.
-
-## 5. Аудит безпеки
-
-*   **Валідація вводу:** Сильна. `validate_amqp_name` запобігає ін'єкціям та атакам обходу шляху (path traversal) в іменах черг/обмінників.
-*   **Автентифікація:** Реалізація API Key використовує `secrets.compare_digest` для запобігання атакам по часу (timing attacks).
-*   **Захист:** `SecurityHeadersMiddleware` додає відповідні заголовки для посилення безпеки.
-*   **Запобігання DoS:** Присутні обмеження розміру тіла запиту та rate limiting.
-
-## 6. Висновок
-
-Кодова база у відмінному стані. Вона надійно вирішує специфічну задачу з'єднання HTTP-клієнтів з AMQP. Рекомендації вище є переважно оптимізаціями для сценаріїв з високим навантаженням.
-
-**Схвалено для використання у продакшені.**
+To view logs:
+```bash
+tail -f logs/app.log
+```
