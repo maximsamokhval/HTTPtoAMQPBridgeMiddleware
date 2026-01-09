@@ -42,3 +42,25 @@ To view logs:
 ```bash
 tail -f logs/app.log
 ```
+
+## Phase 2b: Auth Refactoring & Multi-User Support (09.01.2026)
+
+### Зміни
+1.  **Authentication**:
+    - Замінено глобальний `X-API-Key` на **HTTP Basic Auth**.
+    - Кожен запит тепер несе в собі credentials (`username:password`) користувача RabbitMQ.
+2.  **Connection Management**:
+    - Переписано `AMQPClient`. Тепер це **Connection Manager**.
+    - Реалізовано пул з'єднань: `credentials -> session`.
+    - Користувачі працюють у ізольованих сесіях (окремі з'єднання та канали).
+    - Додано background task для закриття неактивних сесій (idle > 5 хв).
+3.  **Metrics**:
+    - Додано метрику `rmq_middleware_active_sessions` для моніторингу кількості відкритих AMQP з'єднань.
+    - Оновлено health-check для агрегації pending messages з усіх сесій.
+4.  **Security**:
+    - Middleware більше не має "супер-прав" на публікацію. Права перевіряються RabbitMQ на рівні кожного користувача.
+    - `setup_topology` тепер також може використовувати credentials користувача (або системні, якщо не передані).
+
+### Рекомендації
+- Налаштувати RabbitMQ users та permissions згідно з вимогами безпеки.
+- Слідкувати за метрикою `active_sessions`. Велика кількість унікальних користувачів може збільшити навантаження на RabbitMQ (connection churn).

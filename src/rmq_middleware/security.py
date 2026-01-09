@@ -13,7 +13,7 @@ import time
 from typing import Annotated
 
 from fastapi import Depends, Header, HTTPException, Request, status
-from fastapi.security import APIKeyHeader
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from loguru import logger
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -31,20 +31,6 @@ class SecuritySettings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
-    )
-    
-    # API Key Authentication
-    api_key_enabled: bool = Field(
-        default=False,
-        description="Enable API key authentication",
-    )
-    api_key: str = Field(
-        default="",
-        description="Required API key for authentication (set via API_KEY env var)",
-    )
-    api_key_header_name: str = Field(
-        default="X-API-Key",
-        description="Header name for API key",
     )
     
     # Rate Limiting
@@ -170,55 +156,27 @@ def validate_routing_key(key: str) -> str:
 
 
 # =============================================================================
-# API Key Authentication
+# Authentication (HTTP Basic)
 # =============================================================================
 
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+security = HTTPBasic()
 
 
-async def verify_api_key(
-    api_key: Annotated[str | None, Depends(api_key_header)],
-) -> str | None:
-    """Verify API key from header.
+async def get_amqp_credentials(
+    credentials: Annotated[HTTPBasicCredentials, Depends(security)],
+) -> HTTPBasicCredentials:
+    """Extract AMQP credentials from Basic Auth header.
     
     Returns:
-        The API key if valid, None if auth disabled.
-    
-    Raises:
-        HTTPException: If API key is missing or invalid.
+        The credentials object containing username and password.
     """
-    settings = get_security_settings()
-    
-    if not settings.api_key_enabled:
-        return None
-    
-    if not settings.api_key:
-        logger.warning("API_KEY_ENABLED=true but API_KEY is not set")
-        return None
-    
-    if not api_key:
+    if not credentials.username or not credentials.password:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "error": "missing_api_key",
-                "detail": f"API key required in {settings.api_key_header_name} header",
-            },
-            headers={"WWW-Authenticate": "ApiKey"},
+            detail="Username and password are required",
+            headers={"WWW-Authenticate": "Basic"},
         )
-    
-    # Constant-time comparison to prevent timing attacks
-    if not secrets.compare_digest(api_key, settings.api_key):
-        logger.warning("Invalid API key attempt")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail={
-                "error": "invalid_api_key",
-                "detail": "Invalid API key",
-            },
-            headers={"WWW-Authenticate": "ApiKey"},
-        )
-    
-    return api_key
+    return credentials
 
 
 # =============================================================================

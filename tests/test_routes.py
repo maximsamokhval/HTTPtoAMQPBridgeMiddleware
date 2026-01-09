@@ -9,8 +9,9 @@ from rmq_middleware.amqp_wrapper import AMQPClient, ConsumedMessage
 
 client = TestClient(app)
 
-# Mock headers for API key auth
-AUTH_HEADERS = {"X-API-Key": "test-key"}
+# Mock headers for Basic Auth (user:pass) -> base64 "dXNlcjpwYXNz"
+AUTH_HEADERS = {"Authorization": "Basic dXNlcjpwYXNz"}
+CREDENTIALS_TUPLE = ("user", "pass")
 
 @pytest.fixture
 def mock_amqp():
@@ -23,8 +24,6 @@ def mock_amqp():
 @pytest.fixture
 def override_settings(monkeypatch):
     """Override settings for testing."""
-    monkeypatch.setenv("API_KEY_ENABLED", "true")
-    monkeypatch.setenv("API_KEY", "test-key")
     monkeypatch.setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
 
 class TestPublishRoute:
@@ -52,8 +51,19 @@ class TestPublishRoute:
         call_args = mock_amqp.publish.call_args[1]
         assert call_args["exchange"] == "test.ex"
         assert call_args["payload"] == {"msg": "hello"}
+        assert call_args["credentials"] == CREDENTIALS_TUPLE
         assert call_args["persistent"] is True  # Default
         assert call_args["priority"] == 0  # Default
+
+    def test_publish_no_auth(self, mock_amqp, override_settings):
+        """Test publish without credentials."""
+        payload = {
+            "exchange": "test.ex",
+            "routing_key": "key",
+            "payload": {"msg": "hello"},
+        }
+        response = client.post("/v1/publish", json=payload)
+        assert response.status_code == 401
 
     def test_publish_validation_error(self, mock_amqp, override_settings):
         """Test validation error (missing field)."""
@@ -82,12 +92,14 @@ class TestHealthRoutes:
             "ready": True,
             "state": "connected",
             "pending_messages": 0,
+            "active_sessions": 1
         }
         
         response = client.get("/ready")
         assert response.status_code == 200
         data = response.json()
         assert data["amqp_ready"] is True
+        assert data["active_sessions"] == 1
 
     def test_readiness_check_failure(self, mock_amqp):
         """Test GET /ready failure when AMQP not ready."""
@@ -96,6 +108,7 @@ class TestHealthRoutes:
             "ready": False,
             "state": "disconnected",
             "pending_messages": 0,
+            "active_sessions": 0
         }
         
         response = client.get("/ready")
@@ -137,6 +150,10 @@ class TestFetchRoute:
         data = response.json()
         assert data["delivery_tag"] == 1
         assert data["body"] == {"data": "test"}
+        
+        # Verify credentials passed
+        mock_amqp.consume_one.assert_awaited_once()
+        assert mock_amqp.consume_one.call_args[1]["credentials"] == CREDENTIALS_TUPLE
 
     def test_fetch_timeout_no_content(self, mock_amqp, override_settings):
         """Test fetch timeout (204 No Content)."""
@@ -153,3 +170,14 @@ class TestFetchRoute:
         response = client.post("/v1/fetch", json=payload, headers=AUTH_HEADERS)
         # Timeout validation happens in Pydantic model
         assert response.status_code == 422
+
+    def test_ack_success(self, mock_amqp, override_settings):
+        """Test successful ack."""
+        mock_amqp.acknowledge.return_value = True
+        
+        response = client.post("/v1/ack/1", headers=AUTH_HEADERS)
+        
+        assert response.status_code == 200
+        assert response.json()["status"] == "acknowledged"
+        
+        mock_amqp.acknowledge.assert_awaited_once_with(1, credentials=CREDENTIALS_TUPLE)

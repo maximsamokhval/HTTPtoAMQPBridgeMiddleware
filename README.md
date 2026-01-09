@@ -13,10 +13,11 @@
 - **Надійність**: Використовує RabbitMQ Publisher Confirms та ручні підтвердження (acknowledgments) для гарантії доставки "At-Least-Once".
 - **Управління топологією**: Автоматично налаштовує Exchanges, Queues та Dead Letter Exchanges (DLX).
 - **Безпека**:
-  - Аутентифікація через API Key (`X-API-Key`)
+  - **HTTP Basic Authentication**: Використовує стандартний механізм аутентифікації. Middleware виступає проксі, передаючи облікові дані (username/password) безпосередньо в RabbitMQ.
+  - Управління підключеннями (Connection Pooling): Автоматично створює та кешує з'єднання для кожного користувача.
   - Обмеження частоти запитів (Rate Limiting)
   - Валідація та санітизація вхідних даних (відповідно до OWASP)
-- **Спостережуваність (Observability)**: Структуроване JSON логування з Correlation IDs.
+- **Спостережуваність (Observability)**: Структуроване JSON логування з Correlation IDs та Prometheus метрики.
 - **Валідація схеми**: Строгі Pydantic V2 моделі для надійної обробки даних.
 
 ## Встановлення та локальна розробка
@@ -65,12 +66,24 @@
 classDiagram
     class AMQPClient {
         +get_instance() AMQPClient
-        +connect()
-        +publish(exchange, routing_key, payload)
-        +consume_one(queue, timeout)
-        +acknowledge(delivery_tag)
+        +publish(exchange, routing_key, payload, credentials)
+        +consume_one(queue, timeout, credentials)
+        +acknowledge(delivery_tag, credentials)
     }
     
+    class UserSession {
+        +connection: AbstractConnection
+        +publisher_channel: AbstractChannel
+        +consumer_channel: AbstractChannel
+        +pending_messages: Dict
+        +last_used: float
+    }
+
+    class AMQPConnectionManager {
+        -sessions: Dict[str, UserSession]
+        +_get_session(credentials)
+    }
+
     class PublishRequest {
         +exchange: str
         +routing_key: str
@@ -85,13 +98,8 @@ classDiagram
         +auto_ack: bool
     }
 
-    class Middleware {
-        +add_security_headers()
-        +add_request_id()
-    }
-
+    AMQPClient *-- UserSession : manages
     AMQPClient ..> PublishRequest : uses
-    AMQPClient ..> FetchRequest : uses
 ```
 
 ### Діаграма послідовності: Публікація (Sequence Diagram)
@@ -102,8 +110,15 @@ sequenceDiagram
     participant API as Middleware API
     participant AMQP as RabbitMQ
     
-    Client->>API: POST /v1/publish
-    API->>API: Валідація запиту та Auth
+    Client->>API: POST /v1/publish (Basic Auth: user:pass)
+    API->>API: Валідація запиту
+    API->>API: Отримання сесії (Connection Pool)
+    alt Сесія існує
+        API->>API: Використання існуючого з'єднання
+    else Нова сесія
+        API->>AMQP: Connect (user/pass)
+        AMQP-->>API: Connected
+    end
     API->>AMQP: Basic.Publish (Confirm Mode)
     alt Успіх
         AMQP-->>API: Ack
@@ -118,13 +133,14 @@ sequenceDiagram
 
 ### 1. Публікація повідомлення
 
-Використовуйте строгі типи для прапорів `persistent` та `mandatory`.
+Middleware використовує **HTTP Basic Auth**. Ви повинні надати ім'я користувача та пароль, які зареєстровані в RabbitMQ. Middleware підключиться від імені цього користувача.
 
 ```python
 import requests
+from requests.auth import HTTPBasicAuth
 
 url = "http://localhost:8000/v1/publish"
-headers = {"X-API-Key": "your-secret-key"}
+auth = HTTPBasicAuth('my_rmq_user', 'my_secret_pass')
 
 payload = {
     "exchange": "enterprise.core",
@@ -133,44 +149,39 @@ payload = {
         "order_id": 12345,
         "amount": 99.99
     },
-    # Нові можливості Phase 2:
-    "persistent": True,   # Delivery Mode 2 (збереження на диску)
-    "mandatory": True     # Повернення помилки, якщо маршрут не знайдено
+    "persistent": True,
+    "mandatory": True
 }
 
-response = requests.post(url, json=payload, headers=headers)
+response = requests.post(url, json=payload, auth=auth)
 print(response.status_code) # 202
 print(response.json())
 ```
 
 ### 2. Отримання повідомлення (Long-Polling)
 
-Використання нового ендпоінту `POST /v1/fetch` дозволяє задавати кастомні тайм-аути.
-
 ```python
 import requests
+from requests.auth import HTTPBasicAuth
 
 url = "http://localhost:8000/v1/fetch"
-headers = {"X-API-Key": "your-secret-key"}
+auth = HTTPBasicAuth('my_rmq_user', 'my_secret_pass')
 
-# Запит повідомлення з 'orders.queue' з очікуванням 10 секунд
 payload = {
     "queue": "orders.queue",
     "timeout": 10,
     "auto_ack": False 
 }
 
-response = requests.post(url, json=payload, headers=headers)
+response = requests.post(url, json=payload, auth=auth)
 
 if response.status_code == 200:
     msg = response.json()
     print("Отримано:", msg["body"])
     
-    # Обробка повідомлення...
-    
     # Підтвердження обробки (Acknowledgment)
     ack_url = f"http://localhost:8000/v1/ack/{msg['delivery_tag']}"
-    requests.post(ack_url, headers=headers)
+    requests.post(ack_url, auth=auth)
     
 elif response.status_code == 204:
     print("Черга порожня")
@@ -178,13 +189,14 @@ elif response.status_code == 204:
 
 ## Довідник API (API Reference)
 
-| Ендпоінт | Метод | Опис |
-|----------|-------|------|
-| `/v1/publish` | POST | Публікація повідомлення (Строга схема) |
-| `/v1/fetch` | POST | Отримання повідомлення (Long-polling) |
-| `/v1/ack/{tag}` | POST | Підтвердження повідомлення (Ack) |
-| `/health` | GET | Перевірка працездатності (Liveness) |
-| `/ready` | GET | Перевірка готовності (Readiness) |
+| Ендпоінт | Метод | Опис | Auth |
+|----------|-------|------|------|
+| `/v1/publish` | POST | Публікація повідомлення | Basic |
+| `/v1/fetch` | POST | Отримання повідомлення (Long-polling) | Basic |
+| `/v1/ack/{tag}` | POST | Підтвердження повідомлення (Ack) | Basic |
+| `/v1/reject/{tag}` | POST | Відхилення повідомлення (Reject) | Basic |
+| `/health` | GET | Перевірка працездатності (Liveness) | None |
+| `/ready` | GET | Перевірка готовності (Readiness) | None |
 
 ## Формат запитів до API
 
@@ -196,8 +208,6 @@ elif response.status_code == 204:
 
 #### Мінімальний приклад
 
-Цей приклад надсилає надійне (персистентне) повідомлення.
-
 ```json
 {
   "exchange": "edi.internal.topic",
@@ -206,25 +216,6 @@ elif response.status_code == 204:
     "orderId": "ORD-12345",
     "amount": 150.75,
     "currency": "UAH"
-  }
-}
-```
-
-#### Повний приклад з усіма параметрами
-
-```json
-{
-  "exchange": "edi.internal.topic",
-  "routing_key": "erp.invoice.updated.v1",
-  "payload": "Це повідомлення у вигляді простого рядка",
-  "mandatory": true,
-  "persistence": 1,
-  "priority": 5,
-  "correlation_id": "req-abc-789",
-  "message_id": "uuid-xyz-123-unique",
-  "headers": {
-    "x-source-system": "CRM",
-    "x-trace-id": "trace-id-555"
   }
 }
 ```
@@ -259,20 +250,12 @@ elif response.status_code == 204:
 }
 ```
 
-#### Опис полів
-
-| Поле | Тип | Опис | Обов'язкове | За замовчуванням |
-|---|---|---|---|---|
-| `queue` | `string` | Назва черги, з якої потрібно отримати повідомлення. | Так | - |
-| `timeout` | `integer` | Максимальний час очікування повідомлення в секундах (від 0 до 300). | Ні | `30` |
-| `auto_ack` | `boolean` | Якщо `false`, повідомлення потрібно буде підтвердити окремим запитом на `/v1/ack/{delivery_tag}`. | Ні | `false` |
-
 ## Налаштування (Configuration)
 
 Дивіться `.env.example` для детальної конфігурації. Основні змінні:
-- `RABBITMQ_URL`: Рядок підключення AMQP.
-- `API_KEY`: Секретний ключ для аутентифікації.
-- `RABBITMQ_PREFETCH_COUNT`: Налаштування QoS (кількість повідомлень).
+- `RABBITMQ_URL`: Рядок підключення AMQP (використовується як системний для перевірки здоров'я).
+- `RABBITMQ_PREFETCH_COUNT`: Налаштування QoS.
+- **Примітка:** `API_KEY` більше не використовується. Аутентифікація відбувається через Basic Auth заголовки запиту.
 
 ## Вирішення проблем (Troubleshooting)
 

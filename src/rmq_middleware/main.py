@@ -30,6 +30,7 @@ from rmq_middleware.security import SecurityHeadersMiddleware
 # Metrics
 AMQP_STATUS = Gauge("rmq_middleware_amqp_status", "RabbitMQ connection status (1=connected, 0=disconnected)")
 PENDING_MESSAGES = Gauge("rmq_middleware_pending_messages", "Number of unacknowledged messages")
+ACTIVE_SESSIONS = Gauge("rmq_middleware_active_sessions", "Number of active user connections")
 
 
 async def update_metrics() -> None:
@@ -40,8 +41,10 @@ async def update_metrics() -> None:
             health = await client.health_check()
             AMQP_STATUS.set(1 if health["connected"] else 0)
             PENDING_MESSAGES.set(health["pending_messages"])
+            ACTIVE_SESSIONS.set(health["active_sessions"])
         except Exception:
             AMQP_STATUS.set(0)
+            ACTIVE_SESSIONS.set(0)
         
         # Update every 5 seconds
         try:
@@ -68,7 +71,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Start metrics update task
     metrics_task = asyncio.create_task(update_metrics())
 
-    # Connect to RabbitMQ
+    # Connect to RabbitMQ (System Session)
     client = await AMQPClient.get_instance()
     try:
         await client.connect()
@@ -92,9 +95,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await asyncio.sleep(0.5)
     
     try:
-        await client.disconnect()
+        await client.shutdown()
     except Exception as e:
-        logger.error(f"Error during AMQP disconnect: {e}")
+        logger.error(f"Error during AMQP shutdown: {e}")
     
     logger.info("RMQ Middleware shutdown complete")
 
@@ -125,13 +128,22 @@ def create_app() -> FastAPI:
     async def amqp_error_handler(request: Request, exc: AMQPClientError) -> JSONResponse:
         request_id = get_request_id()
         logger.error(f"AMQP error: {exc}", request_id=request_id)
+        
+        # Determine status code based on error type
+        status_code = 503
+        content = {
+            "error": "amqp_error",
+            "detail": str(exc),
+            "request_id": request_id,
+        }
+
+        if "Authentication failed" in str(exc):
+            status_code = 401
+            content["error"] = "authentication_failed"
+
         return JSONResponse(
-            status_code=503,
-            content={
-                "error": "amqp_error",
-                "detail": str(exc),
-                "request_id": request_id,
-            },
+            status_code=status_code,
+            content=content,
         )
     
     @app.exception_handler(Exception)
