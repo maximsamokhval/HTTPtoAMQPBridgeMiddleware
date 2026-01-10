@@ -7,7 +7,7 @@ logging with correlation IDs.
 import sys
 import uuid
 from contextvars import ContextVar
-from typing import Callable
+from typing import Awaitable, Callable
 
 from fastapi import Request, Response
 from loguru import logger
