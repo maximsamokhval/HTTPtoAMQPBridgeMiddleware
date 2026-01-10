@@ -12,7 +12,6 @@ from typing import Callable
 from fastapi import Request, Response
 from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import ASGIApp
 
 from rmq_middleware.config import get_settings
 
@@ -41,7 +40,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self,
         request: Request,
-        call_next: Callable[[Request], Response],
+        call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
         """Process request with Request-ID tracking."""
         # Extract or generate request ID

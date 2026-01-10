@@ -7,7 +7,7 @@ Provides validated configuration from environment variables with support for
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import AmqpDsn, Field, SecretStr, field_validator
+from pydantic import AmqpDsn, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 

@@ -1,9 +1,8 @@
 """Unit tests for AMQPClient."""
 
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, patch, MagicMock
-from rmq_middleware.amqp_wrapper import AMQPClient, AMQPConnectionError, ConnectionState, TopologyConfig
+from unittest.mock import AsyncMock, patch
+from rmq_middleware.amqp_wrapper import AMQPClient, AMQPConnectionError, TopologyConfig
 
 @pytest.fixture
 def mock_aio_pika():
@@ -18,7 +17,7 @@ async def test_connect_retry_failure(mock_aio_pika):
     
     client = AMQPClient()
     # Speed up retry by patching sleep
-    with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+    with patch("asyncio.sleep", new_callable=AsyncMock):
         # Override settings to fail fast
         client._settings.retry_attempts = 2
         client._settings.retry_base_delay = 0.1

@@ -1,7 +1,6 @@
 """Integration tests using Testcontainers or external RabbitMQ."""
 
 import asyncio
-import os
 import socket
 import logging
 import pytest

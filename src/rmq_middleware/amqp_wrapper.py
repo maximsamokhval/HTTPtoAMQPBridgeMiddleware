@@ -520,7 +520,7 @@ class AMQPClient:
             )
             
             if config.queue_name:
-                queue_args = {
+                queue_args: dict[str, Any] = {
                     "x-dead-letter-exchange": config.dlx_exchange_name,
                 }
                 if config.message_ttl:
@@ -565,7 +565,7 @@ class AMQPClient:
             try:
                 # Try to get count without full lock if possible or just use 0
                 active_sessions_count = len(self._sessions)
-            except:
+            except Exception:
                 pass
                 
             return {

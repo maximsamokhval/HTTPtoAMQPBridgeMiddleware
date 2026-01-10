@@ -8,8 +8,6 @@ Handles:
 """
 
 import asyncio
-import signal
-import sys
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
