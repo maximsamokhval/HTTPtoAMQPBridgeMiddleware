@@ -39,6 +39,12 @@ jobs:
     - name: Install dependencies
       run: uv sync --all-extras --dev
 
+    - name: Lint with Ruff
+      run: uv run ruff check .
+
+    - name: Type check with Mypy
+      run: uv run mypy src/
+
     - name: Run Unit Tests
       run: uv run pytest -v --log-cli-level=INFO tests/test_models.py tests/test_routes.py
       env:
