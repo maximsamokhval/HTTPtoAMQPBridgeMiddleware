@@ -41,6 +41,8 @@ dev = [
     "testcontainers>=4.14.0",
     "ruff>=0.1.13",
     "mypy>=1.8.0",
+    "bandit>=1.7.0",
+    "pip-audit>=1.0.0",
 ]
 
 [tool.ruff]
