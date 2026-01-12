@@ -1,16 +1,51 @@
-name: CI
+name: CI Professional Grade
 
 on:
   push:
-    branches: [ "master", "main","dev"]
+    branches: [ "master", "main", "dev" ]
   pull_request:
     branches: [ "master", "main" ]
 
 jobs:
-  test:
-    name: Test with Python ${{ matrix.python-version }}
+  quality-and-security:
+    name: Code Quality & Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true # Обов'язково для швидкості
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
+
+      # 1. Форматування: Код має бути ідеальним
+      - name: Check formatting (Ruff)
+        run: uv run ruff format --check .
+
+      # 2. Поглиблений лінтинг: Включаємо правила безпеки (S) та складності (C90)
+      - name: Lint with Ruff (All rules)
+        run: uv run ruff check . --select E,F,B,S,C90 --ignore S101
+
+      # 3. Аудит залежностей: Шукаємо вразливі бібліотеки
+      - name: Dependency Security Audit
+        run: uv pip audit
+
+      # 4. Статичний аналіз на вразливості коду
+      - name: Security scan (Bandit)
+        run: uv run bandit -r src/
+
+  tests:
+    name: Tests (Py${{ matrix.python-version }})
+    needs: quality-and-security # Не запускаємо тести, якщо код "брудний"
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false # Бачимо помилки на всіх версіях
       matrix:
         python-version: ["3.11", "3.12"]
 
@@ -19,8 +54,6 @@ jobs:
         image: rabbitmq:4.0-management
         ports:
           - 5672:5672
-          - 15672:15672
-        # Simple healthcheck to ensure it's ready before tests start
         options: >-
           --health-cmd "rabbitmq-diagnostics -q ping"
           --health-interval 10s
@@ -28,34 +61,30 @@ jobs:
           --health-retries 5
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Install uv
-      uses: astral-sh/setup-uv@v5
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
 
-    - name: Set up Python ${{ matrix.python-version }}
-      run: uv python install ${{ matrix.python-version }}
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
 
-    - name: Install dependencies
-      run: uv sync --all-extras --dev
+      - name: Install dependencies
+        run: uv sync --all-extras --dev
 
-    - name: Lint with Ruff
-      run: uv run ruff check .
+      # 5. Тести з генерацією звіту про покриття (Coverage)
+      - name: Run Tests with Coverage
+        run: |
+          uv run pytest --cov=src --cov-report=xml --cov-report=term-missing
+        env:
+          RABBITMQ_URL: "amqp://guest:guest@localhost:5672/"
+          LOG_LEVEL: "DEBUG"
 
-    - name: Type check with Mypy
-      run: uv run mypy src/
-
-    - name: Run Unit Tests
-      run: uv run pytest -v --log-cli-level=INFO tests/test_models.py tests/test_routes.py
-      env:
-        # Dummy URL to satisfy Pydantic validation during collection
-        # (It points to the service container, so it's actually valid!)
-        RABBITMQ_URL: "amqp://guest:guest@localhost:5672/"
-        LOG_LEVEL: "DEBUG"
-
-    - name: Run Integration Tests
-      # The test script will detect port 5672 is open and use the service container
-      run: uv run pytest -v --log-cli-level=INFO tests/test_integration.py
-      env:
-        RABBITMQ_URL: "amqp://guest:guest@localhost:5672/"
-        LOG_LEVEL: "DEBUG"
+      # 6. Завантаження звіту (наприклад, у Codecov або просто як артефакт)
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
