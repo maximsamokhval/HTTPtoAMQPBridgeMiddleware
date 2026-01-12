@@ -262,7 +262,10 @@ async def check_rate_limit(request: Request) -> None:
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail={
                 "error": "rate_limit_exceeded",
-                "detail": f"Rate limit exceeded. Try again in {settings.rate_limit_window_seconds} seconds.",
+                "detail": (
+                    f"Rate limit exceeded. Try again in "
+                    f"{settings.rate_limit_window_seconds} seconds."
+                ),
             },
             headers={
                 "Retry-After": str(settings.rate_limit_window_seconds),
@@ -282,7 +285,11 @@ SECURITY_HEADERS = {
     "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
     "Cache-Control": "no-store, no-cache, must-revalidate",
     "Pragma": "no-cache",
-    "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: https:; font-src 'self' https:; connect-src 'self'",
+    "Content-Security-Policy": (
+        "default-src 'self'; script-src 'self' 'unsafe-inline' https:; "
+        "style-src 'self' 'unsafe-inline' https:; img-src 'self' data: https:; "
+        "font-src 'self' https:; connect-src 'self'"
+    ),
     "Referrer-Policy": "strict-origin-when-cross-origin",
     "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
 }
@@ -334,7 +341,10 @@ async def validate_request_size(request: Request) -> None:
                     status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                     detail={
                         "error": "request_too_large",
-                        "detail": f"Request body exceeds maximum size of {settings.max_request_body_bytes} bytes",
+                        "detail": (
+                            f"Request body exceeds maximum size of "
+                            f"{settings.max_request_body_bytes} bytes"
+                        ),
                     },
                 )
         except ValueError:

@@ -175,7 +175,10 @@ def setup_logging() -> None:
             rotation=settings.log_rotation,
             retention=settings.log_retention,
             level=settings.log_level,
-            format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {extra[request_id]} | {name}:{function}:{line} - {message}"
+            format=(
+                "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {extra[request_id]} | "
+                "{name}:{function}:{line} - {message}"
+            )
             if settings.log_format == "text"
             else "{message}",
             serialize=True if settings.log_format == "json" else False,

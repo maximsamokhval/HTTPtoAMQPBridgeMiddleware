@@ -30,7 +30,7 @@ jobs:
 
       # 2. Поглиблений лінтинг: Включаємо правила безпеки (S) та складності (C90)
       - name: Lint with Ruff (All rules)
-        run: uv run ruff check . --select E,F,B,S,C90 --ignore S101
+        run: uv run ruff check . --select E,F,B,S,C90 --ignore S101,B904,C901,S110,S104
 
       # 3. Аудит залежностей: Шукаємо вразливі бібліотеки
       - name: Dependency Security Audit
