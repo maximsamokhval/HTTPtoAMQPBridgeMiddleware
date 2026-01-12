@@ -8,23 +8,28 @@ from pydantic import BaseModel, Field, ConfigDict
 
 class DeliveryMode(IntEnum):
     """AMQP Delivery Mode."""
+
     TRANSIENT = 1
     PERSISTENT = 2
 
 
 class PublishRequest(BaseModel):
     """Request mode for message publishing."""
-    
+
     model_config = ConfigDict(extra="forbid")
 
     exchange: str = Field(..., description="Target Exchange name")
     routing_key: str = Field(..., description="Routing key for message distribution")
-    payload: Union[Dict[str, Any], str] = Field(..., description="JSON-serializable message body or string")
-    
+    payload: Union[Dict[str, Any], str] = Field(
+        ..., description="JSON-serializable message body or string"
+    )
+
     # Reliability Parameters
     mandatory: bool = Field(default=True, description="Return message if unroutable")
-    persistence: DeliveryMode = Field(default=DeliveryMode.PERSISTENT, description="1=Transient, 2=Persistent")
-    
+    persistence: DeliveryMode = Field(
+        default=DeliveryMode.PERSISTENT, description="1=Transient, 2=Persistent"
+    )
+
     # Metadata for Message Tracing (Idempotency)
     correlation_id: Optional[str] = Field(None, description="Request-Response identifier")
     message_id: Optional[str] = Field(None, description="Unique message ID for deduplication")
@@ -34,7 +39,7 @@ class PublishRequest(BaseModel):
 
 class FetchRequest(BaseModel):
     """Request model for message fetching (pull)."""
-    
+
     model_config = ConfigDict(extra="forbid")
 
     queue: str = Field(..., description="Queue name to consume from")

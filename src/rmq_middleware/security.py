@@ -21,16 +21,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Security Configuration
 # =============================================================================
 
+
 class SecuritySettings(BaseSettings):
     """Security-related configuration."""
-    
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
     )
-    
+
     # Rate Limiting
     rate_limit_enabled: bool = Field(
         default=False,
@@ -48,7 +49,7 @@ class SecuritySettings(BaseSettings):
         le=3600,
         description="Rate limit window in seconds",
     )
-    
+
     # Request Size Limits
     max_request_body_bytes: int = Field(
         default=1_048_576,  # 1 MB
@@ -56,7 +57,7 @@ class SecuritySettings(BaseSettings):
         le=104_857_600,  # 100 MB max
         description="Maximum request body size in bytes",
     )
-    
+
     # Input Validation
     max_name_length: int = Field(
         default=255,
@@ -94,47 +95,46 @@ DANGEROUS_PATTERNS = [
 
 class InputValidationError(Exception):
     """Raised when input validation fails."""
+
     pass
 
 
 def validate_amqp_name(name: str, field_name: str = "name") -> str:
     """Validate AMQP resource name (exchange, queue, routing key).
-    
+
     Args:
         name: The name to validate.
         field_name: Field name for error messages.
-    
+
     Returns:
         The validated name.
-    
+
     Raises:
         InputValidationError: If validation fails.
     """
     settings = get_security_settings()
-    
+
     # Check length
     if not name:
         raise InputValidationError(f"{field_name} cannot be empty")
-    
+
     if len(name) > settings.max_name_length:
         raise InputValidationError(
             f"{field_name} exceeds maximum length of {settings.max_name_length}"
         )
-    
+
     # Check for dangerous patterns
     for pattern in DANGEROUS_PATTERNS:
         if pattern in name:
-            raise InputValidationError(
-                f"{field_name} contains forbidden pattern: '{pattern}'"
-            )
-    
+            raise InputValidationError(f"{field_name} contains forbidden pattern: '{pattern}'")
+
     # Check character set (allow # and * for routing keys)
     if not AMQP_NAME_PATTERN.match(name.replace("#", "").replace("*", "")):
         raise InputValidationError(
             f"{field_name} contains invalid characters. "
             f"Allowed: a-z, A-Z, 0-9, '.', '-', '_', '#', '*'"
         )
-    
+
     return name
 
 
@@ -164,7 +164,7 @@ async def get_amqp_credentials(
     credentials: Annotated[HTTPBasicCredentials, Depends(security)],
 ) -> HTTPBasicCredentials:
     """Extract AMQP credentials from Basic Auth header.
-    
+
     Returns:
         The credentials object containing username and password.
     """
@@ -181,59 +181,58 @@ async def get_amqp_credentials(
 # Rate Limiting (Simple In-Memory)
 # =============================================================================
 
+
 class RateLimiter:
     """Simple in-memory rate limiter using sliding window."""
-    
+
     def __init__(self):
         self._requests: dict[str, list[float]] = {}
-    
+
     def is_allowed(self, key: str) -> tuple[bool, int]:
         """Check if request is allowed.
-        
+
         Args:
             key: Client identifier (e.g., IP or API key).
-        
+
         Returns:
             Tuple of (allowed, remaining_requests).
         """
         settings = get_security_settings()
-        
+
         if not settings.rate_limit_enabled:
             return True, settings.rate_limit_requests
-        
+
         now = time.time()
         window_start = now - settings.rate_limit_window_seconds
-        
+
         # Get or create request list
         if key not in self._requests:
             self._requests[key] = []
-        
+
         # Remove old requests outside window
-        self._requests[key] = [
-            ts for ts in self._requests[key] if ts > window_start
-        ]
-        
+        self._requests[key] = [ts for ts in self._requests[key] if ts > window_start]
+
         remaining = settings.rate_limit_requests - len(self._requests[key])
-        
+
         if remaining <= 0:
             return False, 0
-        
+
         # Record this request
         self._requests[key].append(now)
         return True, remaining - 1
-    
+
     def cleanup(self) -> None:
         """Remove stale entries to prevent memory leak."""
         settings = get_security_settings()
         now = time.time()
         window_start = now - settings.rate_limit_window_seconds
-        
+
         keys_to_remove = []
         for key, timestamps in self._requests.items():
             self._requests[key] = [ts for ts in timestamps if ts > window_start]
             if not self._requests[key]:
                 keys_to_remove.append(key)
-        
+
         for key in keys_to_remove:
             del self._requests[key]
 
@@ -244,20 +243,20 @@ rate_limiter = RateLimiter()
 
 async def check_rate_limit(request: Request) -> None:
     """Check rate limit for request.
-    
+
     Raises:
         HTTPException: If rate limit exceeded.
     """
     settings = get_security_settings()
-    
+
     if not settings.rate_limit_enabled:
         return
-    
+
     # Use client IP as key (could also use API key)
     client_ip = request.client.host if request.client else "unknown"
-    
+
     allowed, remaining = rate_limiter.is_allowed(client_ip)
-    
+
     if not allowed:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -291,15 +290,15 @@ SECURITY_HEADERS = {
 
 class SecurityHeadersMiddleware:
     """Middleware to add security headers to all responses."""
-    
+
     def __init__(self, app):
         self.app = app
-    
+
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        
+
         async def send_with_headers(message):
             if message["type"] == "http.response.start":
                 headers = dict(message.get("headers", []))
@@ -309,7 +308,7 @@ class SecurityHeadersMiddleware:
                         headers[header_key] = value.encode()
                 message["headers"] = list(headers.items())
             await send(message)
-        
+
         await self.app(scope, receive, send_with_headers)
 
 
@@ -317,14 +316,15 @@ class SecurityHeadersMiddleware:
 # Request Size Validation
 # =============================================================================
 
+
 async def validate_request_size(request: Request) -> None:
     """Validate request body size.
-    
+
     Raises:
         HTTPException: If body exceeds size limit.
     """
     settings = get_security_settings()
-    
+
     content_length = request.headers.get("content-length")
     if content_length:
         try:

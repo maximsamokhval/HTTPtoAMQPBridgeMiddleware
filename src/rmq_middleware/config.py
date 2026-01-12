@@ -13,18 +13,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     """Application configuration with validation.
-    
+
     All settings are loaded from environment variables with optional .env file
     support. Sensitive values use SecretStr to prevent accidental logging.
     """
-    
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
     )
-    
+
     # RabbitMQ Connection
     rabbitmq_url: AmqpDsn = Field(
         ...,
@@ -36,7 +36,7 @@ class Settings(BaseSettings):
         le=1000,
         description="Maximum unacknowledged messages per consumer",
     )
-    
+
     # Retry Configuration
     retry_attempts: int = Field(
         default=60,
@@ -50,7 +50,7 @@ class Settings(BaseSettings):
         le=60.0,
         description="Base delay in seconds for exponential backoff",
     )
-    
+
     # Timeout Configuration
     publish_timeout: float = Field(
         default=30.0,
@@ -64,7 +64,7 @@ class Settings(BaseSettings):
         le=300.0,
         description="Timeout in seconds for long-polling consume",
     )
-    
+
     # Logging Configuration
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
         default="DEBUG",
@@ -86,7 +86,7 @@ class Settings(BaseSettings):
         default="10 days",
         description="Log retention duration",
     )
-    
+
     # Application Settings
     app_name: str = Field(
         default="rmq-middleware",
@@ -102,17 +102,17 @@ class Settings(BaseSettings):
         le=65535,
         description="Port to bind the HTTP server",
     )
-    
+
     @property
     def rabbitmq_url_str(self) -> str:
         """Return RabbitMQ URL as string for aio-pika."""
         return str(self.rabbitmq_url)
-    
+
     @property
     def rabbitmq_url_masked(self) -> str:
         """Return RabbitMQ URL with password masked for logging."""
         url = str(self.rabbitmq_url)
-        # Simple masking - replace password between : and @ 
+        # Simple masking - replace password between : and @
         if "@" in url and "://" in url:
             prefix, rest = url.split("://", 1)
             if "@" in rest:
@@ -126,7 +126,7 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """Get cached settings instance.
-    
+
     Uses lru_cache to ensure settings are only loaded once.
     """
     return Settings()

@@ -26,7 +26,10 @@ from rmq_middleware.security import SecurityHeadersMiddleware
 
 
 # Metrics
-AMQP_STATUS = Gauge("rmq_middleware_amqp_status", "RabbitMQ connection status (1=connected, 0=disconnected)")
+AMQP_STATUS = Gauge(
+    "rmq_middleware_amqp_status",
+    "RabbitMQ connection status (1=connected, 0=disconnected)",
+)
 PENDING_MESSAGES = Gauge("rmq_middleware_pending_messages", "Number of unacknowledged messages")
 ACTIVE_SESSIONS = Gauge("rmq_middleware_active_sessions", "Number of active user connections")
 
@@ -43,7 +46,7 @@ async def update_metrics() -> None:
         except Exception:
             AMQP_STATUS.set(0)
             ACTIVE_SESSIONS.set(0)
-        
+
         # Update every 5 seconds
         try:
             await asyncio.sleep(5)
@@ -58,14 +61,14 @@ async def update_metrics() -> None:
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan manager."""
     settings = get_settings()
-    
+
     # Startup
     logger.info(
         "Starting RMQ Middleware",
         version=__version__,
         rabbitmq_url=settings.rabbitmq_url_masked,
     )
-    
+
     # Start metrics update task
     metrics_task = asyncio.create_task(update_metrics())
 
@@ -75,14 +78,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await client.connect()
     except Exception as e:
         logger.error(f"Failed to connect to RabbitMQ on startup: {e}")
-    
+
     logger.info("RMQ Middleware started successfully")
-    
+
     yield
-    
+
     # Shutdown
     logger.info("Shutting down RMQ Middleware")
-    
+
     # Cancel metrics task
     metrics_task.cancel()
     try:
@@ -91,19 +94,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         pass
 
     await asyncio.sleep(0.5)
-    
+
     try:
         await client.shutdown()
     except Exception as e:
         logger.error(f"Error during AMQP shutdown: {e}")
-    
+
     logger.info("RMQ Middleware shutdown complete")
 
 
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     setup_logging()
-    
+
     app = FastAPI(
         title="RMQ Middleware",
         description="HTTP-to-AMQP Bridge for ERP Integration (1C:Enterprise)",
@@ -113,20 +116,20 @@ def create_app() -> FastAPI:
         redoc_url="/redoc",
         openapi_url="/openapi.json",
     )
-    
+
     # Setup Prometheus instrumentation
     Instrumentator().instrument(app).expose(app)
-    
+
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestIDMiddleware)
-    
+
     app.include_router(router)
-    
+
     @app.exception_handler(AMQPClientError)
     async def amqp_error_handler(request: Request, exc: AMQPClientError) -> JSONResponse:
         request_id = get_request_id()
         logger.error(f"AMQP error: {exc}", request_id=request_id)
-        
+
         # Determine status code based on error type
         status_code = 503
         content = {
@@ -143,7 +146,7 @@ def create_app() -> FastAPI:
             status_code=status_code,
             content=content,
         )
-    
+
     @app.exception_handler(Exception)
     async def general_error_handler(request: Request, exc: Exception) -> JSONResponse:
         request_id = get_request_id()
@@ -156,7 +159,7 @@ def create_app() -> FastAPI:
                 "request_id": request_id,
             },
         )
-    
+
     return app
 
 
@@ -165,9 +168,9 @@ app = create_app()
 
 if __name__ == "__main__":
     import uvicorn
-    
+
     settings = get_settings()
-    
+
     uvicorn.run(
         "rmq_middleware.main:app",
         host=settings.app_host,

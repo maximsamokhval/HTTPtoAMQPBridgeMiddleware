@@ -36,8 +36,10 @@ from rmq_middleware.security import (
 
 # Response Models
 
+
 class PublishResponse(BaseModel):
     """Response for successful publish."""
+
     status: str = "accepted"
     request_id: str | None = None
     exchange: str
@@ -48,6 +50,7 @@ class PublishResponse(BaseModel):
 
 class MessageResponse(BaseModel):
     """Response containing a consumed message."""
+
     delivery_tag: int
     body: Any
     routing_key: str
@@ -59,23 +62,27 @@ class MessageResponse(BaseModel):
 
 class AckRequest(BaseModel):
     """Request body for message acknowledgment."""
+
     requeue: bool = False
 
 
 class AckResponse(BaseModel):
     """Response for acknowledgment operations."""
+
     status: str
     delivery_tag: int
 
 
 class HealthResponse(BaseModel):
     """Response for health check endpoints."""
+
     status: str
     service: str = "rmq-middleware"
 
 
 class ReadyResponse(BaseModel):
     """Response for readiness probe."""
+
     status: str
     service: str = "rmq-middleware"
     amqp_connected: bool
@@ -87,6 +94,7 @@ class ReadyResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
     """Standard error response."""
+
     error: str
     detail: str | None = None
     request_id: str | None = None
@@ -112,6 +120,7 @@ health_router = APIRouter(tags=["Health"])
 
 # V1 API Endpoints
 
+
 @v1_router.post(
     "/publish",
     response_model=PublishResponse,
@@ -127,13 +136,13 @@ async def publish_message(
     credentials: Annotated[HTTPBasicCredentials, Depends(get_amqp_credentials)],
 ) -> PublishResponse:
     """Publish a message to RabbitMQ with strict schema validation.
-    
+
     Returns 202 Accepted only after the broker confirms the message is persisted.
     Returns 503 if RabbitMQ is unavailable (no RAM buffering).
     Requires Basic Auth.
     """
     request_id = get_request_id()
-    
+
     # Validate input format (business logic validation)
     try:
         validate_exchange_name(body.exchange)
@@ -147,10 +156,10 @@ async def publish_message(
                 request_id=request_id,
             ).model_dump(),
         )
-    
+
     try:
         client = await AMQPClient.get_instance()
-        
+
         await client.publish(
             exchange=body.exchange,
             routing_key=body.routing_key,
@@ -163,20 +172,20 @@ async def publish_message(
             correlation_id=body.correlation_id,
             priority=body.priority,
         )
-        
+
         return PublishResponse(
             request_id=request_id,
             exchange=body.exchange,
             routing_key=body.routing_key,
             message_id=body.message_id,
-            correlation_id=body.correlation_id or request_id, 
+            correlation_id=body.correlation_id or request_id,
         )
-        
+
     except AMQPConnectionError as e:
         logger.error(f"Publish failed - connection error: {e}")
         # Could be auth error or connection error
         if "Authentication failed" in str(e):
-             raise HTTPException(
+            raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=ErrorResponse(
                     error="authentication_failed",
@@ -231,16 +240,16 @@ async def fetch_message_post(
     credentials: Annotated[HTTPBasicCredentials, Depends(get_amqp_credentials)],
 ) -> MessageResponse | JSONResponse:
     """Fetch a single message from a queue (long-polling) using POST body params.
-    
+
     Supports:
     - Custom timeout (0-300s)
     - Auto-acknowledgment (auto_ack=True)
-    
+
     Returns 200 with message if available, 204 if no message within timeout.
     Requires Basic Auth.
     """
     request_id = get_request_id()
-    
+
     # Validate queue name
     try:
         validate_queue_name(body.queue)
@@ -253,23 +262,23 @@ async def fetch_message_post(
                 request_id=request_id,
             ).model_dump(),
         )
-    
+
     try:
         client = await AMQPClient.get_instance()
-        
+
         message = await client.consume_one(
             queue_name=body.queue,
             credentials=(credentials.username, credentials.password),
             timeout=float(body.timeout),
-            auto_ack=body.auto_ack
+            auto_ack=body.auto_ack,
         )
-        
+
         if message is None:
             return JSONResponse(
                 status_code=status.HTTP_204_NO_CONTENT,
                 content=None,
             )
-        
+
         return MessageResponse(
             delivery_tag=message.delivery_tag,
             body=message.body,
@@ -279,11 +288,11 @@ async def fetch_message_post(
             headers=message.headers,
             redelivered=message.redelivered,
         )
-        
+
     except AMQPConnectionError as e:
         logger.error(f"Fetch failed - connection error: {e}")
         if "Authentication failed" in str(e):
-             raise HTTPException(
+            raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=ErrorResponse(
                     error="authentication_failed",
@@ -327,20 +336,19 @@ async def acknowledge_message(
     body: AckRequest | None = None,
 ) -> AckResponse:
     """Acknowledge successful message processing.
-    
+
     Must be called after processing a message fetched via /fetch endpoint (if auto_ack=False).
     Requires Basic Auth.
     """
     request_id = get_request_id()
-    
+
     try:
         client = await AMQPClient.get_instance()
-        
+
         success = await client.acknowledge(
-            delivery_tag,
-            credentials=(credentials.username, credentials.password)
+            delivery_tag, credentials=(credentials.username, credentials.password)
         )
-        
+
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -350,16 +358,16 @@ async def acknowledge_message(
                     request_id=request_id,
                 ).model_dump(),
             )
-        
+
         return AckResponse(
             status="acknowledged",
             delivery_tag=delivery_tag,
         )
-        
+
     except AMQPConnectionError as e:
         logger.error(f"Ack failed - connection error: {e}")
         if "Authentication failed" in str(e):
-             raise HTTPException(
+            raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=ErrorResponse(
                     error="authentication_failed",
@@ -393,22 +401,22 @@ async def reject_message(
     body: AckRequest | None = None,
 ) -> AckResponse:
     """Reject a message and optionally requeue it.
-    
+
     If requeue=false (default), message goes to Dead Letter Exchange.
     Requires Basic Auth.
     """
     request_id = get_request_id()
     requeue = body.requeue if body else False
-    
+
     try:
         client = await AMQPClient.get_instance()
-        
+
         success = await client.reject(
             delivery_tag,
             credentials=(credentials.username, credentials.password),
-            requeue=requeue
+            requeue=requeue,
         )
-        
+
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -418,16 +426,16 @@ async def reject_message(
                     request_id=request_id,
                 ).model_dump(),
             )
-        
+
         return AckResponse(
             status="rejected" if not requeue else "requeued",
             delivery_tag=delivery_tag,
         )
-        
+
     except AMQPConnectionError as e:
         logger.error(f"Reject failed - connection error: {e}")
         if "Authentication failed" in str(e):
-             raise HTTPException(
+            raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=ErrorResponse(
                     error="authentication_failed",
@@ -448,6 +456,7 @@ async def reject_message(
 
 # Health Check Endpoints
 
+
 @health_router.get(
     "/health",
     response_model=HealthResponse,
@@ -467,13 +476,13 @@ async def health_check() -> HealthResponse:
 )
 async def readiness_check() -> ReadyResponse:
     """Readiness probe - checks RabbitMQ connection status.
-    
+
     Returns 200 if the application is ready (system connection active).
     """
     try:
         client = await AMQPClient.get_instance()
         health = await client.health_check()
-        
+
         if not health["ready"]:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -482,7 +491,7 @@ async def readiness_check() -> ReadyResponse:
                     detail=f"AMQP state: {health['state']}",
                 ).model_dump(),
             )
-        
+
         return ReadyResponse(
             status="ready",
             amqp_connected=health["connected"],
@@ -491,7 +500,7 @@ async def readiness_check() -> ReadyResponse:
             pending_messages=health["pending_messages"],
             active_sessions=health["active_sessions"],
         )
-        
+
     except Exception as e:
         logger.error(f"Readiness check failed: {e}")
         raise HTTPException(

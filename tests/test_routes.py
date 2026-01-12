@@ -5,13 +5,19 @@ import pytest
 from fastapi.testclient import TestClient
 
 from rmq_middleware.main import app
-from rmq_middleware.amqp_wrapper import AMQPClient, ConsumedMessage, AMQPConnectionError, AMQPPublishError
+from rmq_middleware.amqp_wrapper import (
+    AMQPClient,
+    ConsumedMessage,
+    AMQPConnectionError,
+    AMQPPublishError,
+)
 
 client = TestClient(app)
 
 # Mock headers for Basic Auth (user:pass) -> base64 "dXNlcjpwYXNz"
 AUTH_HEADERS = {"Authorization": "Basic dXNlcjpwYXNz"}
 CREDENTIALS_TUPLE = ("user", "pass")
+
 
 @pytest.fixture
 def mock_amqp():
@@ -21,10 +27,12 @@ def mock_amqp():
         mock_get.return_value = mock_client
         yield mock_client
 
+
 @pytest.fixture
 def override_settings(monkeypatch):
     """Override settings for testing."""
     monkeypatch.setenv("RABBITMQ_URL", "amqp://guest:guest@localhost:5672/")
+
 
 class TestPublishRoute:
     """Tests for POST /v1/publish."""
@@ -40,12 +48,12 @@ class TestPublishRoute:
             "headers": {"x-test": "1"},
         }
         response = client.post("/v1/publish", json=payload, headers=AUTH_HEADERS)
-        
+
         assert response.status_code == 202
         data = response.json()
         assert data["status"] == "accepted"
         assert data["exchange"] == "test.ex"
-        
+
         # Verify AMQP call
         mock_amqp.publish.assert_awaited_once()
         call_args = mock_amqp.publish.call_args[1]
@@ -78,28 +86,28 @@ class TestPublishRoute:
     def test_publish_connection_error(self, mock_amqp, override_settings):
         """Test publish connection error."""
         mock_amqp.publish.side_effect = AMQPConnectionError("Connection lost")
-        
+
         payload = {
             "exchange": "test.ex",
             "routing_key": "key",
             "payload": {"msg": "hello"},
         }
         response = client.post("/v1/publish", json=payload, headers=AUTH_HEADERS)
-        
+
         assert response.status_code == 503
         assert response.json()["detail"]["error"] == "service_unavailable"
 
     def test_publish_timeout_error(self, mock_amqp, override_settings):
         """Test publish timeout error."""
         mock_amqp.publish.side_effect = AMQPPublishError("Publish timeout")
-        
+
         payload = {
             "exchange": "test.ex",
             "routing_key": "key",
             "payload": {"msg": "hello"},
         }
         response = client.post("/v1/publish", json=payload, headers=AUTH_HEADERS)
-        
+
         assert response.status_code == 504
         assert response.json()["detail"]["error"] == "publish_timeout"
 
@@ -131,9 +139,9 @@ class TestHealthRoutes:
             "ready": True,
             "state": "connected",
             "pending_messages": 0,
-            "active_sessions": 1
+            "active_sessions": 1,
         }
-        
+
         response = client.get("/ready")
         assert response.status_code == 200
         data = response.json()
@@ -147,9 +155,9 @@ class TestHealthRoutes:
             "ready": False,
             "state": "disconnected",
             "pending_messages": 0,
-            "active_sessions": 0
+            "active_sessions": 0,
         }
-        
+
         response = client.get("/ready")
         assert response.status_code == 503
         assert response.json()["detail"]["error"] == "not_ready"
@@ -167,18 +175,18 @@ class TestFetchRoute:
             exchange="ex",
             correlation_id="cid",
             headers={},
-            redelivered=False
+            redelivered=False,
         )
         mock_amqp.consume_one.return_value = mock_msg
 
         payload = {"queue": "q", "timeout": 5}
         response = client.post("/v1/fetch", json=payload, headers=AUTH_HEADERS)
-        
+
         assert response.status_code == 200
         data = response.json()
         assert data["delivery_tag"] == 1
         assert data["body"] == {"data": "test"}
-        
+
         # Verify credentials passed
         mock_amqp.consume_one.assert_awaited_once()
         assert mock_amqp.consume_one.call_args[1]["credentials"] == CREDENTIALS_TUPLE
@@ -186,10 +194,10 @@ class TestFetchRoute:
     def test_fetch_timeout_no_content(self, mock_amqp, override_settings):
         """Test fetch timeout (204 No Content)."""
         mock_amqp.consume_one.return_value = None
-        
+
         payload = {"queue": "q", "timeout": 1}
         response = client.post("/v1/fetch", json=payload, headers=AUTH_HEADERS)
-        
+
         assert response.status_code == 204
 
     def test_fetch_validation(self, mock_amqp, override_settings):
@@ -202,29 +210,29 @@ class TestFetchRoute:
     def test_ack_success(self, mock_amqp, override_settings):
         """Test successful ack."""
         mock_amqp.acknowledge.return_value = True
-        
+
         response = client.post("/v1/ack/1", headers=AUTH_HEADERS)
-        
+
         assert response.status_code == 200
         assert response.json()["status"] == "acknowledged"
-        
+
         mock_amqp.acknowledge.assert_awaited_once_with(1, credentials=CREDENTIALS_TUPLE)
 
     def test_ack_failure_not_found(self, mock_amqp, override_settings):
         """Test ack failure (tag not found)."""
         mock_amqp.acknowledge.return_value = False
-        
+
         response = client.post("/v1/ack/999", headers=AUTH_HEADERS)
-        
+
         assert response.status_code == 400
         assert "invalid_delivery_tag" in response.json()["detail"]["error"]
 
     def test_reject_success(self, mock_amqp, override_settings):
         """Test successful reject."""
         mock_amqp.reject.return_value = True
-        
+
         response = client.post("/v1/reject/1", headers=AUTH_HEADERS)
-        
+
         assert response.status_code == 200
         assert response.json()["status"] == "rejected"
         mock_amqp.reject.assert_awaited_once_with(1, credentials=CREDENTIALS_TUPLE, requeue=False)
@@ -232,9 +240,9 @@ class TestFetchRoute:
     def test_reject_requeue(self, mock_amqp, override_settings):
         """Test successful reject with requeue."""
         mock_amqp.reject.return_value = True
-        
+
         response = client.post("/v1/reject/1", json={"requeue": True}, headers=AUTH_HEADERS)
-        
+
         assert response.status_code == 200
         assert response.json()["status"] == "requeued"
         mock_amqp.reject.assert_awaited_once_with(1, credentials=CREDENTIALS_TUPLE, requeue=True)

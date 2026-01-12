@@ -32,6 +32,7 @@ from rmq_middleware.middleware import get_request_id
 
 class ConnectionState(str, Enum):
     """AMQP connection state machine states."""
+
     DISCONNECTED = "disconnected"
     CONNECTING = "connecting"
     CONNECTED = "connected"
@@ -41,9 +42,10 @@ class ConnectionState(str, Enum):
 @dataclass
 class ConsumedMessage:
     """Wrapper for consumed messages with metadata.
-    
+
     Provides a serializable representation of an AMQP message for HTTP responses.
     """
+
     delivery_tag: int
     body: Any
     routing_key: str
@@ -51,7 +53,7 @@ class ConsumedMessage:
     correlation_id: str | None
     headers: dict[str, Any]
     redelivered: bool
-    
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -68,6 +70,7 @@ class ConsumedMessage:
 @dataclass
 class TopologyConfig:
     """Configuration for exchange and queue topology setup."""
+
     exchange_name: str
     exchange_type: ExchangeType = ExchangeType.TOPIC
     queue_name: str = ""
@@ -76,7 +79,7 @@ class TopologyConfig:
     dlx_exchange_name: str = ""
     dlx_queue_name: str = ""
     message_ttl: int | None = None  # milliseconds
-    
+
     def __post_init__(self):
         """Set default DLX names if not provided."""
         if not self.dlx_exchange_name:
@@ -87,27 +90,32 @@ class TopologyConfig:
 
 class AMQPClientError(Exception):
     """Base exception for AMQP client errors."""
+
     pass
 
 
 class AMQPConnectionError(AMQPClientError):
     """Raised when connection to RabbitMQ fails."""
+
     pass
 
 
 class AMQPPublishError(AMQPClientError):
     """Raised when message publishing fails."""
+
     pass
 
 
 class AMQPConsumeError(AMQPClientError):
     """Raised when message consumption fails."""
+
     pass
 
 
 @dataclass
 class UserSession:
     """Represents a connection session for a specific user."""
+
     connection: AbstractConnection
     publisher_channel: AbstractChannel
     consumer_channel: AbstractChannel
@@ -130,24 +138,24 @@ class UserSession:
 
 class AMQPClient:
     """Robust AMQP client with connection pooling and message operations.
-    
+
     Implements the singleton pattern to ensure shared state.
     Manages a pool of connections keyed by user credentials.
     """
-    
+
     _instance: "AMQPClient | None" = None
     _lock: asyncio.Lock = asyncio.Lock()
-    
+
     def __init__(self, settings: Settings | None = None):
         """Initialize AMQP client."""
         self._settings = settings or get_settings()
         self._sessions: dict[str, UserSession] = {}  # Key: "username:password"
         self._session_lock = asyncio.Lock()
-        
+
         # System connection for health checks and global ops
         self._system_session: UserSession | None = None
         self._cleanup_task: asyncio.Task | None = None
-    
+
     @classmethod
     async def get_instance(cls, settings: Settings | None = None) -> "AMQPClient":
         """Get or create singleton instance."""
@@ -157,7 +165,7 @@ class AMQPClient:
                 # Start cleanup task
                 cls._instance._start_cleanup_task()
             return cls._instance
-    
+
     @classmethod
     async def reset_instance(cls) -> None:
         """Reset singleton instance (for testing)."""
@@ -201,7 +209,7 @@ class AMQPClient:
                         if now - session.last_used > 300:
                             await session.close()
                             to_remove.append(key)
-                    
+
                     for key in to_remove:
                         del self._sessions[key]
                         logger.info(f"Closed idle session for user: {key.split(':')[0]}")
@@ -213,7 +221,7 @@ class AMQPClient:
     async def _create_session(self, url: str) -> UserSession:
         """Create a new AMQP session from URL with retries."""
         last_error = None
-        
+
         for attempt in range(self._settings.retry_attempts):
             try:
                 if attempt > 0:
@@ -225,14 +233,14 @@ class AMQPClient:
                     url,
                     timeout=30.0,
                 )
-                
+
                 # Create channels
                 pub_channel = await connection.channel()
                 await pub_channel.set_qos(prefetch_count=self._settings.rabbitmq_prefetch_count)
-                
+
                 sub_channel = await connection.channel()
                 await sub_channel.set_qos(prefetch_count=self._settings.rabbitmq_prefetch_count)
-                
+
                 return UserSession(
                     connection=connection,
                     publisher_channel=pub_channel,
@@ -242,19 +250,21 @@ class AMQPClient:
             except Exception as e:
                 last_error = e
                 logger.warning(f"Connection attempt {attempt + 1} failed: {e}")
-        
-        raise AMQPConnectionError(f"Failed to connect after {self._settings.retry_attempts} attempts: {last_error}")
+
+        raise AMQPConnectionError(
+            f"Failed to connect after {self._settings.retry_attempts} attempts: {last_error}"
+        )
 
     async def _get_session(self, credentials: Tuple[str, str] | None = None) -> UserSession:
         """Get or create a session for the given credentials.
-        
+
         If credentials are provided, manages a pooled session.
         If None, returns the system session (creates if needed).
         """
         if credentials:
             username, password = credentials
             key = f"{username}:{password}"
-            
+
             async with self._session_lock:
                 if key in self._sessions:
                     session = self._sessions[key]
@@ -303,7 +313,7 @@ class AMQPClient:
             # System session
             if self._system_session and not self._system_session.connection.is_closed:
                 return self._system_session
-            
+
             logger.info("Connecting system session...")
             try:
                 self._system_session = await self._create_session(self._settings.rabbitmq_url_str)
@@ -321,12 +331,12 @@ class AMQPClient:
         """Gracefully shutdown all connections."""
         if self._cleanup_task:
             self._cleanup_task.cancel()
-        
+
         async with self._session_lock:
             for session in self._sessions.values():
                 await session.close()
             self._sessions.clear()
-        
+
         if self._system_session:
             await self._system_session.close()
             self._system_session = None
@@ -350,10 +360,10 @@ class AMQPClient:
     ) -> None:
         """Publish message using user credentials."""
         session = await self._get_session(credentials)
-        
+
         if not correlation_id:
             correlation_id = get_request_id() or None
-        
+
         # Serialize payload
         if isinstance(payload, dict):
             body = json.dumps(payload).encode("utf-8")
@@ -365,9 +375,9 @@ class AMQPClient:
             body = payload
             content_type = "application/octet-stream"
         else:
-             body = str(payload).encode("utf-8")
-             content_type = "text/plain"
-        
+            body = str(payload).encode("utf-8")
+            content_type = "text/plain"
+
         message = Message(
             body=body,
             correlation_id=correlation_id,
@@ -375,12 +385,12 @@ class AMQPClient:
             headers=headers or {},
             delivery_mode=DeliveryMode.PERSISTENT if persistent else DeliveryMode.NOT_PERSISTENT,
             priority=priority,
-            content_type=content_type
+            content_type=content_type,
         )
-        
+
         try:
             amqp_exchange = await session.publisher_channel.get_exchange(exchange)
-            
+
             await asyncio.wait_for(
                 amqp_exchange.publish(
                     message,
@@ -389,7 +399,7 @@ class AMQPClient:
                 ),
                 timeout=self._settings.publish_timeout,
             )
-            
+
             logger.info(
                 "Message published",
                 user=credentials[0],
@@ -397,7 +407,7 @@ class AMQPClient:
                 routing_key=routing_key,
                 correlation_id=message.correlation_id,
             )
-            
+
         except asyncio.TimeoutError:
             raise AMQPPublishError(
                 f"Publish confirmation timeout after {self._settings.publish_timeout}s"
@@ -415,10 +425,10 @@ class AMQPClient:
         """Consume message using user credentials."""
         session = await self._get_session(credentials)
         timeout = timeout or self._settings.consume_timeout
-        
+
         try:
             queue: AbstractQueue = await session.consumer_channel.get_queue(queue_name)
-            
+
             try:
                 message: AbstractIncomingMessage = await asyncio.wait_for(
                     queue.get(no_ack=False),
@@ -426,17 +436,17 @@ class AMQPClient:
                 )
             except asyncio.TimeoutError:
                 return None
-            
+
             if message is None:
                 return None
-            
+
             if auto_ack:
-                 await message.ack()
-                 logger.info("Message auto-acknowledged", delivery_tag=message.delivery_tag)
+                await message.ack()
+                logger.info("Message auto-acknowledged", delivery_tag=message.delivery_tag)
             else:
-                 # Store in session's pending messages
-                 session.pending_messages[message.delivery_tag] = message
-            
+                # Store in session's pending messages
+                session.pending_messages[message.delivery_tag] = message
+
             # Parse body
             try:
                 if message.content_type == "application/json":
@@ -445,7 +455,7 @@ class AMQPClient:
                     body = message.body.decode("utf-8")
             except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
                 body = message.body.hex()
-            
+
             return ConsumedMessage(
                 delivery_tag=message.delivery_tag,
                 body=body,
@@ -455,7 +465,7 @@ class AMQPClient:
                 headers=dict(message.headers) if message.headers else {},
                 redelivered=message.redelivered,
             )
-            
+
         except aio_pika.exceptions.QueueEmpty:
             return None
         except Exception as e:
@@ -464,11 +474,11 @@ class AMQPClient:
     async def acknowledge(self, delivery_tag: int, credentials: Tuple[str, str]) -> bool:
         """Acknowledge message using user credentials."""
         session = await self._get_session(credentials)
-        
+
         message = session.pending_messages.pop(delivery_tag, None)
         if message is None:
             return False
-        
+
         try:
             await message.ack()
             return True
@@ -477,14 +487,16 @@ class AMQPClient:
             session.pending_messages[delivery_tag] = message
             raise
 
-    async def reject(self, delivery_tag: int, credentials: Tuple[str, str], requeue: bool = False) -> bool:
+    async def reject(
+        self, delivery_tag: int, credentials: Tuple[str, str], requeue: bool = False
+    ) -> bool:
         """Reject message using user credentials."""
         session = await self._get_session(credentials)
-        
+
         message = session.pending_messages.pop(delivery_tag, None)
         if message is None:
             return False
-        
+
         try:
             await message.reject(requeue=requeue)
             return True
@@ -493,10 +505,12 @@ class AMQPClient:
             session.pending_messages[delivery_tag] = message
             raise
 
-    async def setup_topology(self, config: TopologyConfig, credentials: Tuple[str, str] | None = None) -> None:
+    async def setup_topology(
+        self, config: TopologyConfig, credentials: Tuple[str, str] | None = None
+    ) -> None:
         """Set up topology. Uses provided credentials or system defaults."""
         session = await self._get_session(credentials)
-        
+
         try:
             # Declare DLX
             dlx_exchange = await session.publisher_channel.declare_exchange(
@@ -504,35 +518,35 @@ class AMQPClient:
                 ExchangeType.FANOUT,
                 durable=config.durable,
             )
-            
+
             if config.dlx_queue_name:
                 dlq = await session.publisher_channel.declare_queue(
                     config.dlx_queue_name,
                     durable=config.durable,
                 )
                 await dlq.bind(dlx_exchange)
-            
+
             # Main Exchange
             main_exchange = await session.publisher_channel.declare_exchange(
                 config.exchange_name,
                 config.exchange_type,
                 durable=config.durable,
             )
-            
+
             if config.queue_name:
                 queue_args: dict[str, Any] = {
                     "x-dead-letter-exchange": config.dlx_exchange_name,
                 }
                 if config.message_ttl:
                     queue_args["x-message-ttl"] = config.message_ttl
-                
+
                 main_queue = await session.publisher_channel.declare_queue(
                     config.queue_name,
                     durable=config.durable,
                     arguments=queue_args,
                 )
                 await main_queue.bind(main_exchange, routing_key=config.routing_key)
-                
+
         except Exception as e:
             logger.error(f"Failed to setup topology: {e}")
             raise
@@ -543,21 +557,21 @@ class AMQPClient:
         try:
             session = await self._get_session(None)
             connected = not session.connection.is_closed
-            
+
             total_pending = len(session.pending_messages)
-            
+
             # Aggregate pending messages from all user sessions
             async with self._session_lock:
                 active_sessions_count = len(self._sessions)
                 for s in self._sessions.values():
                     total_pending += len(s.pending_messages)
-            
+
             return {
                 "connected": connected,
                 "ready": connected,
                 "state": "connected" if connected else "disconnected",
                 "pending_messages": total_pending,
-                "active_sessions": active_sessions_count
+                "active_sessions": active_sessions_count,
             }
         except Exception:
             # Fallback if system session fails
@@ -567,11 +581,11 @@ class AMQPClient:
                 active_sessions_count = len(self._sessions)
             except Exception:
                 pass
-                
+
             return {
                 "connected": False,
                 "ready": False,
                 "state": "disconnected",
                 "pending_messages": 0,
-                "active_sessions": active_sessions_count
+                "active_sessions": active_sessions_count,
             }
