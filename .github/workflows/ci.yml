@@ -34,7 +34,7 @@ jobs:
 
       # 3. Аудит залежностей: Шукаємо вразливі бібліотеки
       - name: Dependency Security Audit
-        run: uv pip audit
+        run: uvx pip-audit
 
       # 4. Статичний аналіз на вразливості коду
       - name: Security scan (Bandit)
