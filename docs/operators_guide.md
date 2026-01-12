@@ -1,67 +1,67 @@
-# RMQ Middleware - Operator's Guide
+# RMQ Middleware - Посібник оператора
 
-## Overview
+## Огляд
 
-The RMQ Middleware is an HTTP-to-AMQP bridge designed for reliable message delivery between HTTP clients (such as 1C:Enterprise) and RabbitMQ. This guide explains operational aspects including deployment, configuration, and failure handling.
+RMQ Middleware — це HTTP‑to‑AMQP міст, призначений для надійної доставки повідомлень між HTTP‑клієнтами (такими як 1С:Підприємство) та RabbitMQ. Цей посібник пояснює операційні аспекти, включаючи розгортання, конфігурацію та обробку збоїв.
 
 ---
 
-## Deployment Prerequisites
+## Передумови розгортання
 
-### System Requirements
-- Docker 24.0+ with Docker Compose v2
-- Network access to RabbitMQ (port 5672)
-- Minimum 256MB RAM (512MB recommended)
+### Системні вимоги
+- Docker 24.0+ з Docker Compose v2
+- Мережевий доступ до RabbitMQ (порт 5672)
+- Мінімум 256 МБ ОЗП (рекомендовано 512 МБ)
 
-### Quick Start
+### Швидкий старт
 
 ```bash
-# Clone and start
+# Клонувати та запустити
 cd rmq_middleware
 docker-compose up -d
 
-# Check status
+# Перевірити статус
 docker-compose ps
 docker-compose logs -f middleware
 ```
 
 ---
 
-## Configuration Reference
+## Довідник з конфігурації
 
-All configuration is done via environment variables. See `.env.example` for a complete template.
+Уся конфігурація виконується через змінні середовища. Повний шаблон дивіться у файлі `.env.example`.
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `RABBITMQ_URL` | Yes | - | Full AMQP connection string |
-| `RABBITMQ_PREFETCH_COUNT` | No | 10 | Max unacked messages per consumer |
-| `RETRY_ATTEMPTS` | No | 5 | Connection retry attempts |
-| `RETRY_BASE_DELAY` | No | 1.0 | Base delay for exponential backoff (seconds) |
-| `PUBLISH_TIMEOUT` | No | 30.0 | Publisher confirm timeout (seconds) |
-| `CONSUME_TIMEOUT` | No | 30.0 | Long-polling timeout (seconds) |
-| `LOG_LEVEL` | No | INFO | Logging level (DEBUG/INFO/WARNING/ERROR) |
-| `LOG_FORMAT` | No | json | Log format (json/text) |
+| Змінна | Обов’язкова | За замовчуванням | Опис |
+|--------|-------------|------------------|------|
+| `RABBITMQ_URL` | Так | – | Повний рядок підключення AMQP |
+| `RABBITMQ_PREFETCH_COUNT` | Ні | 10 | Максимальна кількість непідтверджених повідомлень на споживача |
+| `RETRY_ATTEMPTS` | Ні | 60 | Кількість спроб повторного підключення |
+| `RETRY_BASE_DELAY` | Ні | 1.0 | Базова затримка для експоненційного відступу (секунди) |
+| `PUBLISH_TIMEOUT` | Ні | 30.0 | Таймаут підтвердження публікації (секунди) |
+| `CONSUME_TIMEOUT` | Ні | 30.0 | Таймаут довгого опитування (секунди) |
+| `LOG_LEVEL` | Ні | INFO | Рівень логування (DEBUG/INFO/WARNING/ERROR/CRITICAL) |
+| `LOG_FORMAT` | Ні | json | Формат логів (json/text) |
 
-### Security Notes
-- `RABBITMQ_URL` passwords are automatically masked in logs
-- Run the container as non-root (UID 1000)
-- No build tools in the production image
+### Зауваження безпеки
+- Паролі в `RABBITMQ_URL` автоматично маскуються в логах
+- Запускайте контейнер від імені непривілейованого користувача (UID 1000)
+- У виробничому образі відсутні інструменти збірки
 
 ---
 
-## Health Monitoring
+## Моніторинг стану
 
-### Endpoints
+### Кінцеві точки
 
-| Endpoint | Purpose | Success | Failure |
-|----------|---------|---------|---------|
-| `GET /health` | Liveness probe | 200 OK | Application crashed |
-| `GET /ready` | Readiness probe | 200 OK | 503 Service Unavailable |
+| Кінцева точка | Призначення | Успіх | Невдача |
+|---------------|-------------|-------|---------|
+| `GET /health` | Перевірка живості (liveness) | 200 OK | Додаток аварійно завершився |
+| `GET /ready`  | Перевірка готовності (readiness) | 200 OK | 503 Service Unavailable |
 
-### Kubernetes/Docker Health Checks
+### Перевірки стану для Kubernetes/Docker
 
 ```yaml
-# Kubernetes probe configuration
+# Конфігурація проб для Kubernetes
 livenessProbe:
   httpGet:
     path: /health
@@ -77,9 +77,9 @@ readinessProbe:
   periodSeconds: 5
 ```
 
-### Monitoring Metrics
+### Метрики моніторингу
 
-The `/ready` endpoint returns detailed status:
+Кінцева точка `/ready` повертає детальний статус:
 
 ```json
 {
@@ -88,86 +88,87 @@ The `/ready` endpoint returns detailed status:
   "amqp_connected": true,
   "amqp_ready": true,
   "amqp_state": "connected",
-  "pending_messages": 0
+  "pending_messages": 0,
+  "active_sessions": 3
 }
 ```
 
 ---
 
-## RabbitMQ Restart Handling
+## Обробка перезапуску RabbitMQ
 
-### Automatic Reconnection Behavior
+### Поведінка автоматичного перепідключення
 
-When RabbitMQ becomes unavailable (restart, network partition, etc.), the middleware handles it as follows:
+Коли RabbitMQ стає недоступним (перезапуск, розрив мережі тощо), middleware обробляє це наступним чином:
 
-#### 1. During RabbitMQ Downtime
-- New publish requests immediately receive **HTTP 503 Service Unavailable**
-- No messages are buffered in memory (prevents OOM)
-- Fetch/consume requests return 503
-- The `/ready` endpoint returns 503
+#### 1. Під час простою RabbitMQ
+- Нові запити на публікацію негайно отримують **HTTP 503 Service Unavailable**
+- Жодні повідомлення не буферизуються в пам’яті (запобігає вичерпанню ОЗП)
+- Запити на отримання/споживання повертають 503
+- Кінцева точка `/ready` повертає 503
 
-#### 2. Reconnection Process
-- The middleware detects connection loss via aio-pika callbacks
-- A background task initiates reconnection with exponential backoff:
-  - Attempt 1: Wait 1 second
-  - Attempt 2: Wait 2 seconds
-  - Attempt 3: Wait 4 seconds
-  - Attempt 4: Wait 8 seconds
-  - Attempt 5: Wait 16 seconds
-- Total reconnection window: ~31 seconds (with default settings)
+#### 2. Процес перепідключення
+- Middleware виявляє втрату з’єднання через колбеки aio‑pika
+- Фонова задача ініціює перепідключення з експоненційним відступом:
+  - Спроба 1: Зачекати 1 секунду
+  - Спроба 2: Зачекати 2 секунди
+  - Спроба 3: Зачекати 4 секунди
+  - Спроба 4: Зачекати 8 секунд
+  - Спроба 5: Зачекати 16 секунд
+- Загальне вікно перепідключення: ~31 секунда (зі стандартними налаштуваннями)
 
-#### 3. After RabbitMQ Recovery
-- Connection is automatically re-established
-- Channels are recreated with configured prefetch
-- The `/ready` endpoint returns 200
-- Normal message processing resumes
+#### 3. Після відновлення RabbitMQ
+- З’єднання автоматично відновлюється
+- Канали створюються повторно з налаштованим prefetch
+- Кінцева точка `/ready` повертає 200
+- Відновлюється нормальна обробка повідомлень
 
-### Client Retry Strategy
+### Стратегія повторних спроб клієнта
 
-Since the middleware returns 503 during outages, clients (1C) should implement retry logic:
+Оскільки middleware повертає 503 під час простою, клієнти (1С) повинні реалізувати логіку повторних спроб:
 
 ```
-Recommended Client Behavior:
-1. On 503 response, wait 1-5 seconds
-2. Retry the request
-3. Use exponential backoff for repeated failures
-4. Log the failure for investigation
+Рекомендована поведінка клієнта:
+1. При отриманні відповіді 503 зачекати 1‑5 секунд
+2. Повторити запит
+3. Використовувати експоненційний відступ для повторних невдач
+4. Зафіксувати збій для подальшого розслідування
 ```
 
-### Message Safety Guarantees
+### Гарантії безпеки повідомлень
 
-| Scenario | Behavior |
-|----------|----------|
-| RabbitMQ down before publish | 503 returned, message not lost (client has it) |
-| RabbitMQ down during publish | Timeout triggers 504, client should retry |
-| RabbitMQ down after ack | Message confirmed, safe |
-| Message consumed but not acked, RabbitMQ restarts | Message redelivered by RabbitMQ |
+| Сценарій | Поведінка |
+|----------|-----------|
+| RabbitMQ недоступний до публікації | Повертається 503, повідомлення не втрачається (воно є у клієнта) |
+| RabbitMQ стає недоступним під час публікації | Таймаут спричиняє 504, клієнт повинен повторити |
+| RabbitMQ стає недоступним після ack | Повідомлення підтверджено, безпечно |
+| Повідомлення спожито, але не підтверджено, RabbitMQ перезапускається | Повідомлення буде доставлено знову (redelivered) RabbitMQ |
 
 ---
 
-## Graceful Shutdown
+## Швидке завершення роботи
 
-When the middleware receives SIGTERM or SIGINT:
+Коли middleware отримує SIGTERM або SIGINT:
 
-1. **Stop accepting new requests** (FastAPI shutdown)
-2. **Wait for in-flight requests** (500ms default)
-3. **Close AMQP channels** (pending operations complete)
-4. **Close AMQP connection** (clean disconnect)
-5. **Log shutdown complete**
+1. **Припинити прийом нових запитів** (FastAPI shutdown)
+2. **Зачекати на виконувані запити** (за замовчуванням 500 мс)
+3. **Закрити AMQP‑канали** (завершити очікуючі операції)
+4. **Закрити AMQP‑з’єднання** (чисте від’єднання)
+5. **Записати в логи про завершення завершення**
 
-### Docker Stop Behavior
+### Поведінка Docker stop
 
 ```bash
-# Graceful stop (sends SIGTERM, waits 10s)
+# Швидке зупинення (відправляє SIGTERM, чекає 10 с)
 docker-compose stop middleware
 
-# Force kill (not recommended)
+# Примусове завершення (не рекомендується)
 docker-compose kill middleware
 ```
 
-### Kubernetes Termination
+### Завершення роботи в Kubernetes
 
-Configure `terminationGracePeriodSeconds` in your deployment:
+Налаштуйте `terminationGracePeriodSeconds` у вашому deployment:
 
 ```yaml
 spec:
@@ -176,66 +177,66 @@ spec:
 
 ---
 
-## Troubleshooting
+## Вирішення проблем
 
-### Common Issues
+### Поширені проблеми
 
-#### 1. "Connection refused" on startup
-**Cause**: RabbitMQ not ready when middleware starts
+#### 1. «Connection refused» при старті
+**Причина**: RabbitMQ не готовий, коли запускається middleware
 
-**Solution**: Use Docker Compose health-based dependency:
+**Рішення**: Використовуйте залежність на основі стану здоров’я в Docker Compose:
 ```yaml
 depends_on:
   rabbitmq:
     condition: service_healthy
 ```
 
-#### 2. Constant 503 errors
-**Cause**: RabbitMQ connection failing repeatedly
+#### 2. Постійні помилки 503
+**Причина**: З’єднання з RabbitMQ не встановлюється повторно
 
-**Diagnosis**:
+**Діагностика**:
 ```bash
-# Check middleware logs
+# Перевірити логи middleware
 docker-compose logs middleware | grep -i "connect"
 
-# Check RabbitMQ status
+# Перевірити статус RabbitMQ
 docker-compose exec rabbitmq rabbitmq-diagnostics status
 ```
 
-**Solutions**:
-- Verify `RABBITMQ_URL` is correct
-- Check network connectivity between containers
-- Increase `RETRY_ATTEMPTS` for unstable networks
+**Рішення**:
+- Переконайтеся, що `RABBITMQ_URL` правильний
+- Перевірте мережеву зв’язність між контейнерами
+- Збільште `RETRY_ATTEMPTS` для нестабільних мереж
 
-#### 3. Messages not persisting after RabbitMQ restart
-**Cause**: Messages published with `persistent=false`
+#### 3. Повідомлення не зберігаються після перезапуску RabbitMQ
+**Причина**: Повідомлення опубліковано з `persistent=false`
 
-**Solution**: Always use `persistent=true` (default) for critical messages
+**Рішення**: Завжди використовуйте `persistent=true` (за замовчуванням) для критичних повідомлень
 
-#### 4. High memory usage
-**Cause**: Many pending (unacknowledged) messages
+#### 4. Високе використання пам’яті
+**Причина**: Багато очікуючих (непідтверджених) повідомлень
 
-**Diagnosis**: Check `/ready` endpoint for `pending_messages` count
+**Діагностика**: Перевірте кінцеву точку `/ready` на значення `pending_messages`
 
-**Solutions**:
-- Ensure clients call `/v1/ack/{delivery_tag}` after processing
-- Reduce `RABBITMQ_PREFETCH_COUNT`
-- Implement client-side timeout for ack operations
+**Рішення**:
+- Переконайтеся, що клієнти викликають `/v1/ack/{delivery_tag}` після обробки
+- Зменшіть `RABBITMQ_PREFETCH_COUNT`
+- Реалізуйте клієнтський таймаут для операцій ack
 
 ---
 
-## API Quick Reference
+## Швидкий довідник API
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/health` | GET | Liveness probe |
-| `/ready` | GET | Readiness probe |
-| `/v1/publish/{exchange}/{routing_key}` | POST | Publish message |
-| `/v1/fetch/{queue}` | GET | Consume single message |
-| `/v1/ack/{delivery_tag}` | POST | Acknowledge message |
-| `/v1/reject/{delivery_tag}` | POST | Reject message |
+| Кінцева точка | Метод | Опис |
+|---------------|--------|-------------|
+| `/health` | GET | Перевірка живості (liveness) |
+| `/ready` | GET | Перевірка готовності (readiness) |
+| `/v1/publish/{exchange}/{routing_key}` | POST | Опублікувати повідомлення |
+| `/v1/fetch/{queue}` | GET | Спожити одне повідомлення |
+| `/v1/ack/{delivery_tag}` | POST | Підтвердити повідомлення |
+| `/v1/reject/{delivery_tag}` | POST | Відхилити повідомлення |
 
-### Example: Publish Message
+### Приклад: Опублікувати повідомлення
 
 ```bash
 curl -X POST http://localhost:8000/v1/publish/orders/new \
@@ -244,24 +245,24 @@ curl -X POST http://localhost:8000/v1/publish/orders/new \
   -d '{"payload": {"order_id": 12345, "customer": "ACME"}}'
 ```
 
-### Example: Fetch and Acknowledge
+### Приклад: Отримати та підтвердити
 
 ```bash
-# Fetch
+# Отримати
 RESPONSE=$(curl -s http://localhost:8000/v1/fetch/orders.queue)
 DELIVERY_TAG=$(echo $RESPONSE | jq -r '.delivery_tag')
 
-# Process message...
+# Обробити повідомлення...
 
-# Acknowledge
+# Підтвердити
 curl -X POST http://localhost:8000/v1/ack/$DELIVERY_TAG
 ```
 
 ---
 
-## Log Analysis
+## Аналіз логів
 
-### JSON Log Format (Production)
+### JSON‑формат логів (виробництво)
 
 ```json
 {
@@ -275,23 +276,121 @@ curl -X POST http://localhost:8000/v1/ack/$DELIVERY_TAG
 }
 ```
 
-### Key Log Events
+### Ключові події в логах
 
-| Message | Level | Meaning |
-|---------|-------|---------|
-| "Starting RMQ Middleware" | INFO | Application starting |
-| "Connected to RabbitMQ" | INFO | Connection established |
-| "Connection closed unexpectedly" | WARNING | Connection lost |
-| "Retrying connection" | WARNING | Reconnection attempt |
-| "Message published" | INFO | Successful publish |
-| "Publish failed" | ERROR | Publish operation failed |
-| "Shutdown complete" | INFO | Graceful shutdown finished |
+| Повідомлення | Рівень | Значення |
+|--------------|--------|----------|
+| "Starting RMQ Middleware" | INFO | Додаток запускається |
+| "Connected to RabbitMQ" | INFO | З’єднання встановлено |
+| "Connection closed unexpectedly" | WARNING | З’єднання втрачено |
+| "Retrying connection" | WARNING | Спроба перепідключення |
+| "Message published" | INFO | Успішна публікація |
+| "Publish failed" | ERROR | Помилка публікації |
+| "Shutdown complete" | INFO | Швидке завершення завершено |
 
 ---
 
-## Version Information
+## Останні зміни в проекті (станом на січень 2026)
 
-- Application Version: 1.0.0
+### Архітектурні оновлення
+- **Clean Architecture**: бізнес‑правила ізольовані в `src/rmq_middleware/`
+- **Асинхронна обробка**: повна підтримка async/await через FastAPI та aio‑pika
+- **Пул сесій AMQP**: автоматичне управління з’єднаннями для кожного користувача
+- **Моніторинг**: інтеграція Prometheus через prometheus‑fastapi‑instrumentator
+
+### Безпека
+- **Автентифікація за API‑ключем** (HTTP Basic)
+- **Валідація імен черг/обмінів** з забороненими шаблонами
+- **Обмеження частоти запитів** (rate limiting) з ковзним вікном
+- **Заголовки безпеки** (CSP, HSTS, X‑Frame‑Options тощо)
+
+### Якість коду та CI/CD
+- **Лінтинг**: Ruff з правилами безпеки (S), складності (C90), помилок (E), стилю (F)
+- **Форматування**: Ruff format з line‑length=100
+- **Статичний аналіз**: Bandit для виявлення вразливостей коду
+- **Аудит залежностей**: pip‑audit для перевірки вразливостей бібліотек
+- **Тестування**: pytest з покриттям (coverage) та тестовими контейнерами RabbitMQ
+- **CI/CD**: GitHub Actions з двома стадіями — перевірка якості та запуск тестів на Python 3.11 та 3.12
+
+### Поточний стан
+- Гілка `dev` активна, останні коміти зосереджені на покращенні типізації, обробки помилок та оновленні залежностей.
+- Після злиття `dev` → `main` усі перевірки CI проходять успішно (лінтинг, форматування, аудит, тести).
+- Версія **1.0.0** готова до промислового використання.
+
+---
+
+## FAQ для L2 Support
+
+### Загальні питання
+
+**Q1: Як перевірити, чи middleware коректно підключений до RabbitMQ?**
+- Виконайте `GET /ready`. Якщо `amqp_connected` та `amqp_ready` дорівнюють `true`, з’єднання активне.
+- Перегляньте логи middleware на наявність повідомлення `"Connected to RabbitMQ"`.
+
+**Q2: Які коди відповідей може повертати middleware?**
+- `200 OK` – успішне виконання.
+- `400 Bad Request` – некоректні вхідні дані (наприклад, неправильне ім’я черги).
+- `401 Unauthorized` – невірні облікові дані HTTP Basic.
+- `429 Too Many Requests` – перевищено обмеження частоти запитів.
+- `503 Service Unavailable` – RabbitMQ недоступний або middleware не готовий.
+- `504 Gateway Timeout` – таймаут під час публікації.
+
+**Q3: Як довго middleware намагатиметься перепідключитися до RabbitMQ?**
+- За замовчуванням здійснюється до 60 спроб з експоненційним відступом (базова затримка 1 с). Загальний час – близько 31 секунди. Після цього кожен новий запит отримує 503, але фонова задача продовжує спроби.
+
+**Q4: Чи зберігаються повідомлення в пам’яті під час простою RabbitMQ?**
+- Ні. Middleware не буферизує повідомлення, щоб уникнути вичерпання пам’яті. Клієнт повинен зберігати повідомлення та повторювати відправку після відновлення зв’язку.
+
+### Проблеми з продуктивністю
+
+**Q5: Чому зростає використання пам’яті?**
+- Найімовірніша причина – накопичення непідтверджених повідомлень (`pending_messages`). Переконайтеся, що клієнти викликають `/v1/ack/{delivery_tag}` після обробки. Також можна зменшити `RABBITMQ_PREFETCH_COUNT`.
+
+**Q6: Як скоротити час відновлення після перезапуску RabbitMQ?**
+- Зменшіть `RETRY_BASE_DELAY` та збільшіть `RETRY_ATTEMPTS`. Увага: занадто короткі інтервали можуть створити навантаження на брокера.
+
+**Q7: Чому запити на публікацію іноді затримуються на кілька секунд?**
+- Можлива причина – очікування підтвердження від RabbitMQ (publisher confirms). Збільште `PUBLISH_TIMEOUT`, якщо мережа повільна, або перевірте навантаження на RabbitMQ.
+
+### Налаштування та конфігурація
+
+**Q8: Як змінити рівень деталізації логів?**
+- Встановіть змінну середовища `LOG_LEVEL=DEBUG` для максимально детальних логів. У виробничому середовищі використовуйте `LOG_LEVEL=INFO` або `WARNING`.
+
+**Q9: Чи можна використовувати віртуальні хости (vhost) RabbitMQ?**
+- Так. Вкажіть vhost у `RABBITMQ_URL`, наприклад: `amqp://user:pass@host:5672/vhost_name`.
+
+**Q10: Як налаштувати TLS/SSL з’єднання з RabbitMQ?**
+- Додайте параметри TLS до `RABBITMQ_URL`: `amqps://user:pass@host:5671/vhost`. Переконайтеся, що сертифікати RabbitMQ підписані довіреним центром або додайте CA‑сертифікат до образу Docker.
+
+### Розширення та моніторинг
+
+**Q11: Чи підтримує middleware метрики Prometheus?**
+- Так. Після налаштування prometheus‑fastapi‑instrumentator метрики доступні на `/metrics`. Вони включають кількість запитів, тривалість, помилки тощо.
+
+**Q12: Як інтегрувати middleware з існуючою системою сповіщень?**
+- Спостерігайте за логами (JSON‑формат) та метриками. Налаштуйте alert‑правила в Prometheus/Alerta на основі `amqp_connected=false` або зростання `pending_messages`.
+
+**Q13: Чи можна запустити кілька екземплярів middleware для балансування навантаження?**
+- Так. Middleware не зберігає стан між запитами (окрім пулу сесій, який є ізольованим для кожного екземпляра). Використовуйте балансувальник навантаження (наприклад, nginx) перед кількома екземплярами.
+
+### Обслуговування та оновлення
+
+**Q14: Як оновити middleware на нову версію без простою?**
+- Використовуйте стратегію rolling update (Kubernetes Deployment) або blue‑green розгортання. Завершіть поточні запити (SIGTERM), після чого запустіть новий образ.
+
+**Q15: Що робити, якщо клієнт не підтверджує повідомлення (ack) протягом тривалого часу?**
+- Перевірте, чи клієнт живий. Якщо ні, можна вручну відхилити повідомлення через `/v1/reject/{delivery_tag}` з параметром `requeue=true`, щоб повідомлення повернулося до черги.
+
+**Q16: Чи можна змінити топологію (exchanges, queues) під час роботи middleware?**
+- Так, через API `setup_topology` (внутрішнє), але рекомендовано створювати топологію заздалегідь, оскільки динамічні зміни можуть призвести до конфліктів.
+
+---
+
+## Інформація про версії
+
+- Версія додатка: 1.0.0
 - Python: 3.11+
 - FastAPI: 0.109+
-- aio-pika: 9.4+
+- aio‑pika: 9.4+
+- Останнє оновлення документації: січень 2026 р.
