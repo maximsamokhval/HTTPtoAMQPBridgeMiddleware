@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/maximsamokhval/HTTPtoAMQPBridgeMiddleware/actions/workflows/ci.yml/badge.svg)](https://github.com/maximsamokhval/HTTPtoAMQPBridgeMiddleware/actions/workflows/ci.yml)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
+[![codecov](https://codecov.io/github/maximsamokhval/HTTPtoAMQPBridgeMiddleware/branch/main/graph/badge.svg?token=MX7YSVVM6W)](https://codecov.io/github/maximsamokhval/HTTPtoAMQPBridgeMiddleware)
 ![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
 
 Надійне, готове до продакшену middleware для інтеграції RabbitMQ (AMQP) з HTTP сервісами (наприклад, 1C:Enterprise).

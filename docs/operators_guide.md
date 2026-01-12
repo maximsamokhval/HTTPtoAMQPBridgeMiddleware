@@ -387,6 +387,18 @@ curl -X POST http://localhost:8000/v1/ack/$DELIVERY_TAG
 
 ---
 
+## Застарілі функції RabbitMQ
+
+### Функція management_metrics_collection
+
+У версії RabbitMQ 4.x функція `management_metrics_collection` позначена як застаріла (deprecated). У цьому проєкті вона явно вимкнена за допомогою параметра конфігурації:
+
+```conf
+deprecated_features.permit.management_metrics_collection = false
+```
+
+Це імітує поведінку майбутньої версії RabbitMQ, де функція буде видалена, і дозволяє заздалегідь перевірити стабільність системи. Якщо виникають проблеми з моніторингом через веб-інтерфейс керування, параметр можна тимчасово змінити на `true`.
+
 ## Інформація про версії
 
 - Версія додатка: 1.0.0

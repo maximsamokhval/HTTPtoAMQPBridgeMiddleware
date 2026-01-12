@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/maximsamokhval/HTTPtoAMQPBridgeMiddleware/actions/workflows/ci.yml/badge.svg)](https://github.com/maximsamokhval/HTTPtoAMQPBridgeMiddleware/actions/workflows/ci.yml)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
+[![codecov](https://codecov.io/github/maximsamokhval/HTTPtoAMQPBridgeMiddleware/branch/main/graph/badge.svg?token=MX7YSVVM6W)](https://codecov.io/github/maximsamokhval/HTTPtoAMQPBridgeMiddleware)
 ![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
 
 A robust, production-ready middleware for integrating RabbitMQ (AMQP) with HTTP services (e.g., 1C:Enterprise, ERPs, legacy systems).
