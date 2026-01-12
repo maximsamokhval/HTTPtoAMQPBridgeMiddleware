@@ -1,0 +1,30 @@
+name: Manual Architect CI
+
+on:
+  # Це ключовий тригер для ручного запуску
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Оточення для розгортання'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      reason:
+        description: 'Причина ручного запуску (для логів)'
+        required: false
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run logic
+        run: |
+          echo "Запуск у середовищі: ${{ github.event.inputs.environment }}"
+          echo "Причина: ${{ github.event.inputs.reason }}"
