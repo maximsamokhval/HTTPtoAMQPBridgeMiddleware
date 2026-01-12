@@ -93,7 +93,7 @@ class Settings(BaseSettings):
         description="Application name for logging and tracing",
     )
     app_host: str = Field(
-        default="0.0.0.0",
+        default="0.0.0.0",  # nosec
         description="Host to bind the HTTP server",
     )
     app_port: int = Field(

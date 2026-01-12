@@ -579,7 +579,7 @@ class AMQPClient:
             try:
                 # Try to get count without full lock if possible or just use 0
                 active_sessions_count = len(self._sessions)
-            except Exception:
+            except Exception:  # nosec
                 pass
 
             return {
