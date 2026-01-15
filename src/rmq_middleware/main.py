@@ -106,6 +106,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 def create_app() -> FastAPI:
     """Create and configure the FastAPI application."""
     setup_logging()
+    settings = get_settings()
 
     app = FastAPI(
         title="RMQ Middleware",
@@ -117,8 +118,12 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json",
     )
 
-    # Setup Prometheus instrumentation
-    Instrumentator().instrument(app).expose(app)
+    # Setup Prometheus instrumentation (can be disabled for debugging)
+    if not settings.disable_prometheus:
+        Instrumentator().instrument(app).expose(app)
+        logger.info("Prometheus instrumentation enabled")
+    else:
+        logger.warning("Prometheus instrumentation disabled via configuration")
 
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestIDMiddleware)
@@ -150,6 +155,26 @@ def create_app() -> FastAPI:
     @app.exception_handler(Exception)
     async def general_error_handler(request: Request, exc: Exception) -> JSONResponse:
         request_id = get_request_id()
+        
+        # Special handling for "Response content longer than Content-Length" error
+        # This error occurs when uvicorn detects mismatch between Content-Length header
+        # and actual response body length, often due to serialization issues
+        if isinstance(exc, RuntimeError) and "Response content longer than Content-Length" in str(exc):
+            logger.warning(
+                "Content-Length mismatch detected, returning minimal error response",
+                request_id=request_id,
+                error=str(exc)
+            )
+            # Return a minimal, properly serialized response to avoid infinite loops
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "error": "serialization_error",
+                    "detail": "Internal server error during response serialization",
+                    "request_id": request_id,
+                },
+            )
+        
         logger.exception(f"Unexpected error: {exc}", request_id=request_id)
         return JSONResponse(
             status_code=500,

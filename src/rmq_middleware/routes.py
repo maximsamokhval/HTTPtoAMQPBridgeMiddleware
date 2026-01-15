@@ -134,7 +134,7 @@ health_router = APIRouter(tags=["Health"])
 async def publish_message(
     body: PublishRequest,
     credentials: Annotated[HTTPBasicCredentials, Depends(get_amqp_credentials)],
-) -> PublishResponse:
+) -> PublishResponse | JSONResponse:
     """Publish a message to RabbitMQ with strict schema validation.
 
     Returns 202 Accepted only after the broker confirms the message is persisted.
@@ -173,12 +173,17 @@ async def publish_message(
             priority=body.priority,
         )
 
-        return PublishResponse(
+        # Explicit JSON serialization to ensure proper Content-Length calculation
+        response_data = PublishResponse(
             request_id=request_id,
             exchange=body.exchange,
             routing_key=body.routing_key,
             message_id=body.message_id,
             correlation_id=body.correlation_id or request_id,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_202_ACCEPTED,
+            content=response_data.model_dump(),
         )
 
     except AMQPConnectionError as e:
