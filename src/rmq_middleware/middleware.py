@@ -22,9 +22,20 @@ request_id_ctx: ContextVar[str] = ContextVar("request_id", default="")
 def get_request_id() -> str:
     """Get the current request ID from context.
 
-    Returns empty string if not in a request context.
+    Returns a non-empty string:
+    - If in a request context: returns the request ID (from headers or generated UUID)
+    - If not in a request context: returns a generated UUID for traceability
+    
+    This ensures that request_id is always a valid string for logging and correlation.
     """
-    return request_id_ctx.get()
+    request_id = request_id_ctx.get()
+    if not request_id:  # Empty string or None (though default is empty string)
+        # Generate a temporary ID for background operations
+        # This ensures consistent logging even outside request context
+        import uuid
+        request_id = f"bg-{uuid.uuid4().hex[:8]}"
+        # Store it in context for this call? No, we don't set it back to avoid pollution
+    return request_id
 
 
 class RequestIDMiddleware(BaseHTTPMiddleware):

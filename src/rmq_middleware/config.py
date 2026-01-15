@@ -102,6 +102,12 @@ class Settings(BaseSettings):
         le=65535,
         description="Port to bind the HTTP server",
     )
+    
+    # Monitoring Configuration
+    disable_prometheus: bool = Field(
+        default=False,
+        description="Disable Prometheus instrumentation (useful for debugging)",
+    )
 
     @property
     def rabbitmq_url_str(self) -> str:

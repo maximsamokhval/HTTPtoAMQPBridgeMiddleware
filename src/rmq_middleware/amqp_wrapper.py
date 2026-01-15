@@ -359,10 +359,36 @@ class AMQPClient:
         priority: int = 0,
     ) -> None:
         """Publish message using user credentials."""
-        session = await self._get_session(credentials)
+        request_id = get_request_id()
+        username = credentials[0]
+        
+        try:
+            session = await self._get_session(credentials)
+        except AMQPConnectionError as e:
+            # Re-raise with proper classification
+            logger.error(
+                "Failed to get session for publish",
+                user=username,
+                exchange=exchange,
+                routing_key=routing_key,
+                request_id=request_id,
+                error=str(e)
+            )
+            raise
+        except Exception as e:
+            # Wrap unexpected errors during session acquisition
+            logger.error(
+                "Unexpected error during session acquisition",
+                user=username,
+                exchange=exchange,
+                routing_key=routing_key,
+                request_id=request_id,
+                error=str(e)
+            )
+            raise AMQPConnectionError(f"Failed to establish session: {e}")
 
         if not correlation_id:
-            correlation_id = get_request_id() or None
+            correlation_id = request_id or None
 
         # Serialize payload
         if isinstance(payload, dict):
@@ -402,17 +428,59 @@ class AMQPClient:
 
             logger.info(
                 "Message published",
-                user=credentials[0],
+                user=username,
                 exchange=exchange,
                 routing_key=routing_key,
                 correlation_id=message.correlation_id,
+                request_id=request_id,
             )
 
         except asyncio.TimeoutError:
+            logger.error(
+                "Publish confirmation timeout",
+                user=username,
+                exchange=exchange,
+                routing_key=routing_key,
+                timeout=self._settings.publish_timeout,
+                request_id=request_id,
+            )
             raise AMQPPublishError(
                 f"Publish confirmation timeout after {self._settings.publish_timeout}s"
             )
+        except aio_pika.exceptions.ChannelClosed as e:
+            # Channel closed errors often indicate authentication or permission issues
+            error_msg = str(e).lower()
+            logger.error(
+                "Channel closed during publish",
+                user=username,
+                exchange=exchange,
+                routing_key=routing_key,
+                error=error_msg,
+                request_id=request_id,
+            )
+            if "access" in error_msg or "permission" in error_msg or "auth" in error_msg:
+                raise AMQPConnectionError(f"Authentication failed: {e}")
+            raise AMQPPublishError(f"Channel closed: {e}")
+        except aio_pika.exceptions.AMQPError as e:
+            # AMQP protocol errors
+            logger.error(
+                "AMQP error during publish",
+                user=username,
+                exchange=exchange,
+                routing_key=routing_key,
+                error=str(e),
+                request_id=request_id,
+            )
+            raise AMQPPublishError(f"AMQP error: {e}")
         except Exception as e:
+            # Catch-all for unexpected errors
+            logger.exception(
+                "Unexpected error during publish",
+                user=username,
+                exchange=exchange,
+                routing_key=routing_key,
+                request_id=request_id,
+            )
             raise AMQPPublishError(f"Failed to publish message: {e}")
 
     async def consume_one(
