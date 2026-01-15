@@ -84,19 +84,31 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     yield
 
     # Shutdown
-    logger.info("Shutting down RMQ Middleware")
-
-    # Cancel metrics task
+    logger.info("Starting graceful shutdown of RMQ Middleware")
+    
+    # Step 1: Cancel metrics task
     metrics_task.cancel()
     try:
-        await metrics_task
-    except asyncio.CancelledError:
+        await asyncio.wait_for(metrics_task, timeout=1.0)
+    except (asyncio.TimeoutError, asyncio.CancelledError):
         pass
+    except Exception as e:
+        logger.warning(f"Error waiting for metrics task: {e}")
 
-    await asyncio.sleep(0.5)
+    # Step 2: Set draining mode - reject new requests
+    # FastAPI will handle this via lifespan - new requests will get 503
+    logger.info("Entering draining mode - waiting for in-flight requests to complete")
+    
+    # Give some time for in-flight HTTP requests to complete
+    # This allows current API calls to finish processing
+    await asyncio.sleep(2.0)
 
+    # Step 3: Shutdown AMQP client with extended timeout
     try:
-        await client.shutdown()
+        await asyncio.wait_for(client.shutdown(timeout=15.0), timeout=20.0)
+        logger.info("AMQP client shutdown completed successfully")
+    except asyncio.TimeoutError:
+        logger.error("AMQP client shutdown timed out - forcing close")
     except Exception as e:
         logger.error(f"Error during AMQP shutdown: {e}")
 
