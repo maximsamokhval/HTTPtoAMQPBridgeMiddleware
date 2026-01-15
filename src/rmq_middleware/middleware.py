@@ -9,6 +9,7 @@ import uuid
 from contextvars import ContextVar
 from typing import Awaitable, Callable
 
+from typing import Any
 from fastapi import Request, Response
 from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -89,12 +90,20 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             request_id_ctx.reset(token)
 
 
-def text_formatter(record: dict) -> str:
+def text_formatter(record: Any) -> str:
     """Human-readable formatter for development.
 
     Includes request_id when available for easier debugging.
+    Safely handles missing request_id in extra dict.
     """
-    request_id = record["extra"].get("request_id", "")
+    # Safely get request_id with empty string default
+    extra = getattr(record, "extra", {})
+    request_id = extra.get("request_id", "")
+    
+    # Ensure request_id is a string and handle empty case
+    if not isinstance(request_id, str):
+        request_id = str(request_id)
+    
     request_id_str = f"[{request_id[:8]}] " if request_id else ""
 
     return (
@@ -115,7 +124,7 @@ def json_sink(message) -> None:
     # Build log entry
     log_entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "level": record["level"].name,
+        "level": getattr(record["level"], "name", str(record["level"])),
         "message": record["message"],
         "logger": record["name"],
         "module": record["module"],
@@ -123,12 +132,15 @@ def json_sink(message) -> None:
         "line": record["line"],
     }
 
+    # Safely get extra dict
+    extra = getattr(record, "extra", {})
+    
     # Add request_id from context if available
-    if "request_id" in record["extra"]:
-        log_entry["request_id"] = record["extra"]["request_id"]
+    if "request_id" in extra:
+        log_entry["request_id"] = extra["request_id"]
 
     # Add any additional extra fields
-    for key, value in record["extra"].items():
+    for key, value in extra.items():
         if key != "request_id":
             # Skip complex objects that can't be serialized
             try:
@@ -187,7 +199,7 @@ def setup_logging() -> None:
             retention=settings.log_retention,
             level=settings.log_level,
             format=(
-                "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {extra[request_id]} | "
+                "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {extra[request_id]:<16} | "
                 "{name}:{function}:{line} - {message}"
             )
             if settings.log_format == "text"

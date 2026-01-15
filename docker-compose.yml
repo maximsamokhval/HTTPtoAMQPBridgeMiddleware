@@ -9,6 +9,13 @@ services:
       - "15672:15672" # Management UI
     networks:
       - rmq-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
 
   # ==========================================================================
   # RMQ Middleware Application
@@ -25,12 +32,12 @@ services:
       # Never commit real credentials to version control
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/edi
       RABBITMQ_PREFETCH_COUNT: 10
-      RETRY_ATTEMPTS: 5
+      RETRY_ATTEMPTS: 60
       RETRY_BASE_DELAY: 1.0
       PUBLISH_TIMEOUT: 30.0
       CONSUME_TIMEOUT: 30.0
       LOG_LEVEL: INFO
-      LOG_FORMAT: json
+      LOG_FORMAT: text
       LOG_FILE: /var/log/rmq-middleware/app.log
       APP_NAME: rmq-middleware
       APP_HOST: 0.0.0.0
@@ -40,7 +47,8 @@ services:
       # API_KEY: "set-via-secrets-manager"
       RATE_LIMIT_ENABLED: "false"
     depends_on:
-      - rabbitmq
+      rabbitmq:
+        condition: service_healthy
     volumes:
       - ./logs:/var/log/rmq-middleware
     healthcheck:
