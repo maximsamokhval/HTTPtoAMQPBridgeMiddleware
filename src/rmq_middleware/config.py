@@ -87,6 +87,14 @@ class Settings(BaseSettings):
         description="Log retention duration",
     )
 
+    # Message Size Limits
+    max_message_size_bytes: int = Field(
+        default=10_485_760,  # 10 MB
+        ge=1024,
+        le=104_857_600,  # 100 MB max
+        description="Maximum allowed message size in bytes for AMQP messages",
+    )
+    
     # Application Settings
     app_name: str = Field(
         default="rmq-middleware",
