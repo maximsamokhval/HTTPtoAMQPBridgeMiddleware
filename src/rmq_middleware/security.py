@@ -9,7 +9,7 @@ Provides:
 
 import re
 import time
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -83,13 +83,45 @@ def get_security_settings() -> SecuritySettings:
 # =============================================================================
 
 # Valid characters for AMQP names: alphanumeric, dot, dash, underscore
+# Note: # and * are allowed for routing keys but will be handled separately
 AMQP_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9._-]+$")
+
+# Strict pattern for exchange and queue names (no wildcards)
+AMQP_STRICT_PATTERN = re.compile(r"^[a-zA-Z0-9._-]+$")
+
+# Pattern for routing keys (allows # and * as wildcards)
+ROUTING_KEY_PATTERN = re.compile(r"^[a-zA-Z0-9._#*\-]+$")
 
 # Reserved/dangerous patterns to reject
 DANGEROUS_PATTERNS = [
     "..",  # Path traversal
     "//",  # Double slash
-    "amq.",  # RabbitMQ internal prefix
+    "\\",  # Backslash injection
+    "\"",  # Quote injection
+    "'",   # Single quote injection
+    "`",   # Backtick injection
+    "$",   # Variable expansion
+    "(",   # Command injection
+    ")",   # Command injection
+    ";",   # Command separator
+    "&",   # Background process
+    "|",   # Pipe
+    "<",   # Redirect
+    ">",   # Redirect
+    "\n",  # Newline injection
+    "\r",  # Carriage return
+    "\t",  # Tab injection
+    "\0",  # Null byte
+]
+
+# Reserved prefixes for RabbitMQ internal resources
+RESERVED_PREFIXES = [
+    "amq.",      # RabbitMQ internal exchanges/queues
+    "rabbitmq.", # RabbitMQ management
+    "celery",    # Celery framework
+    "reply_",    # RPC reply queues
+    "ha.",       # High availability
+    "mirror.",   # Mirrored queues
 ]
 
 
@@ -99,12 +131,13 @@ class InputValidationError(Exception):
     pass
 
 
-def validate_amqp_name(name: str, field_name: str = "name") -> str:
+def validate_amqp_name(name: str, field_name: str = "name", allow_wildcards: bool = False) -> str:
     """Validate AMQP resource name (exchange, queue, routing key).
 
     Args:
         name: The name to validate.
         field_name: Field name for error messages.
+        allow_wildcards: Whether to allow # and * wildcards (for routing keys).
 
     Returns:
         The validated name.
@@ -114,25 +147,53 @@ def validate_amqp_name(name: str, field_name: str = "name") -> str:
     """
     settings = get_security_settings()
 
-    # Check length
-    if not name:
-        raise InputValidationError(f"{field_name} cannot be empty")
+    # Check for empty or whitespace-only names
+    if not name or not name.strip():
+        raise InputValidationError(f"{field_name} cannot be empty or whitespace only")
 
+    # Trim whitespace
+    name = name.strip()
+    
+    # Check length
     if len(name) > settings.max_name_length:
         raise InputValidationError(
             f"{field_name} exceeds maximum length of {settings.max_name_length}"
         )
 
-    # Check for dangerous patterns
+    # Check for dangerous patterns and characters
     for pattern in DANGEROUS_PATTERNS:
         if pattern in name:
-            raise InputValidationError(f"{field_name} contains forbidden pattern: '{pattern}'")
+            raise InputValidationError(
+                f"{field_name} contains forbidden character/pattern: {repr(pattern)}"
+            )
 
-    # Check character set (allow # and * for routing keys)
-    if not AMQP_NAME_PATTERN.match(name.replace("#", "").replace("*", "")):
+    # Check for reserved prefixes
+    for prefix in RESERVED_PREFIXES:
+        if name.lower().startswith(prefix):
+            raise InputValidationError(
+                f"{field_name} cannot start with reserved prefix: '{prefix}'"
+            )
+
+    # Check character set based on whether wildcards are allowed
+    if allow_wildcards:
+        if not ROUTING_KEY_PATTERN.match(name):
+            raise InputValidationError(
+                f"{field_name} contains invalid characters. "
+                f"Allowed: a-z, A-Z, 0-9, '.', '-', '_', '#', '*'"
+            )
+    else:
+        if not AMQP_STRICT_PATTERN.match(name):
+            raise InputValidationError(
+                f"{field_name} contains invalid characters. "
+                f"Allowed: a-z, A-Z, 0-9, '.', '-', '_'"
+            )
+
+    # Additional security: reject names that could be interpreted as commands
+    if any(cmd in name.lower() for cmd in ["select", "insert", "update", "delete", "drop", "create"]):
+        # This is a heuristic to catch obvious SQL/command injection attempts
+        # Not perfect but adds defense in depth
         raise InputValidationError(
-            f"{field_name} contains invalid characters. "
-            f"Allowed: a-z, A-Z, 0-9, '.', '-', '_', '#', '*'"
+            f"{field_name} contains potentially dangerous content"
         )
 
     return name
@@ -140,17 +201,17 @@ def validate_amqp_name(name: str, field_name: str = "name") -> str:
 
 def validate_exchange_name(name: str) -> str:
     """Validate exchange name."""
-    return validate_amqp_name(name, "exchange")
+    return validate_amqp_name(name, "exchange", allow_wildcards=False)
 
 
 def validate_queue_name(name: str) -> str:
     """Validate queue name."""
-    return validate_amqp_name(name, "queue")
+    return validate_amqp_name(name, "queue", allow_wildcards=False)
 
 
 def validate_routing_key(key: str) -> str:
     """Validate routing key."""
-    return validate_amqp_name(key, "routing_key")
+    return validate_amqp_name(key, "routing_key", allow_wildcards=True)
 
 
 # =============================================================================
@@ -317,6 +378,44 @@ class SecurityHeadersMiddleware:
             await send(message)
 
         await self.app(scope, receive, send_with_headers)
+
+
+# =============================================================================
+# Message Size Validation
+# =============================================================================
+
+
+def validate_message_size(payload: dict[str, Any] | str | bytes) -> None:
+    """Validate message payload size against configured limits.
+    
+    Args:
+        payload: The message payload to validate.
+        
+    Raises:
+        InputValidationError: If payload exceeds maximum allowed size.
+    """
+    from rmq_middleware.config import get_settings
+    
+    settings = get_settings()
+    
+    # Calculate payload size
+    if isinstance(payload, dict):
+        # Approximate JSON size
+        import json
+        size = len(json.dumps(payload).encode('utf-8'))
+    elif isinstance(payload, str):
+        size = len(payload.encode('utf-8'))
+    elif isinstance(payload, bytes):
+        size = len(payload)
+    else:
+        # Unknown type, convert to string
+        size = len(str(payload).encode('utf-8'))
+    
+    if size > settings.max_message_size_bytes:
+        raise InputValidationError(
+            f"Message payload size ({size} bytes) exceeds maximum allowed "
+            f"size of {settings.max_message_size_bytes} bytes"
+        )
 
 
 # =============================================================================
