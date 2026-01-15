@@ -78,3 +78,4 @@ htmlcov/
 Thumbs.db
 desktop.ini
 test_output.txt
+.roo/mcp.json

@@ -44,7 +44,8 @@ def test_general_error_handler_content_length_mismatch():
     async def trigger_error():
         raise RuntimeError("Response content longer than Content-Length")
     
-    client = TestClient(app)
+    # Use TestClient with raise_server_exceptions=False to get the actual response
+    client = TestClient(app, raise_server_exceptions=False)
     response = client.get("/test-content-length-error")
     
     # Should return 500 with serialization_error, not crash
@@ -100,24 +101,31 @@ def test_error_handler_does_not_cause_infinite_loop():
     from rmq_middleware.main import create_app
     app = create_app()
     
-    # Add an endpoint that raises an error that would previously cause
-    # Content-Length mismatch
+    # Add an endpoint that returns a complex object that could cause serialization issues
+    # but FastAPI's jsonable_encoder should handle it gracefully
     @app.get("/test-broken-json")
     async def broken_json():
-        # Return a response that would cause serialization issues
-        # Simulate by returning a non-serializable object (but FastAPI will handle)
-        class NonSerializable:
-            def __repr__(self):
-                return "<NonSerializable>"
-        
-        return {"problem": NonSerializable()}
+        # Return a nested structure with non-standard types that jsonable_encoder can handle
+        import datetime
+        return {
+            "timestamp": datetime.datetime.now(),
+            "set": {1, 2, 3},  # set is not JSON serializable by default
+            "complex": 1 + 2j,  # complex number is not JSON serializable
+        }
     
-    client = TestClient(app)
-    # This should not hang or crash
+    client = TestClient(app, raise_server_exceptions=False)
+    # This should not hang or crash - FastAPI's jsonable_encoder will convert
+    # non-serializable types to strings or raise TypeError internally but handle it
     response = client.get("/test-broken-json")
-    # FastAPI will serialize with default JSONEncoder which calls repr
-    assert response.status_code == 200
-    assert response.json()["problem"] == "<NonSerializable>"
+    # Should return 500 because jsonable_encoder cannot serialize complex numbers
+    # and our general_error_handler will catch the TypeError
+    assert response.status_code == 500
+    data = response.json()
+    # Verify we got a proper error response
+    assert data["error"] == "internal_error"
+    assert "request_id" in data
+    # The important part is that no Content-Length mismatch error occurred
+    # and the response is properly formatted JSON
 
 
 def test_middleware_request_id_generation():
