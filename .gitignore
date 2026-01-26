@@ -79,3 +79,5 @@ Thumbs.db
 desktop.ini
 test_output.txt
 .roo/mcp.json
+coverage.xml
+ruff_error.txt

@@ -408,7 +408,7 @@ class AMQPClient:
         # Step 4: Close all sessions
         async with self._session_lock:
             close_tasks = []
-            for key, session in self._sessions.items():
+            for session in self._sessions.values():
                 close_tasks.append(asyncio.create_task(session.close()))
 
             if close_tasks:
