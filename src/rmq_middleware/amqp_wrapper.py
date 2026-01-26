@@ -26,6 +26,7 @@ from aio_pika.abc import (
 )
 from loguru import logger
 
+from rmq_middleware.circuit_breaker import CircuitBreaker, CircuitBreakerOpen
 from rmq_middleware.config import Settings, get_settings
 from rmq_middleware.middleware import get_request_id
 from rmq_middleware.security import validate_message_size, InputValidationError
@@ -190,6 +191,14 @@ class AMQPClient:
         # System connection for health checks and global ops
         self._system_session: UserSession | None = None
         self._cleanup_task: asyncio.Task | None = None
+
+        # Circuit Breaker for fault tolerance (ADR-002)
+        self._circuit_breaker = CircuitBreaker(
+            failure_threshold=self._settings.cb_failure_threshold,
+            failure_window=self._settings.cb_failure_window_seconds,
+            recovery_timeout=self._settings.cb_recovery_timeout,
+            half_open_requests=self._settings.cb_half_open_requests,
+        )
 
     @classmethod
     async def get_instance(cls, settings: Settings | None = None) -> "AMQPClient":
@@ -446,6 +455,20 @@ class AMQPClient:
         """Publish message using user credentials."""
         request_id = get_request_id()
         username = credentials[0]
+
+        # Check Circuit Breaker state first (ADR-002)
+        if not await self._circuit_breaker.allow_request():
+            logger.warning(
+                "Circuit breaker OPEN - rejecting publish request",
+                user=username,
+                exchange=exchange,
+                routing_key=routing_key,
+                request_id=request_id,
+                cb_state=self._circuit_breaker.state.value,
+            )
+            raise CircuitBreakerOpen(
+                f"Circuit breaker is {self._circuit_breaker.state.value} - broker unavailable"
+            )
         
         # Validate message size before attempting to publish
         try:
@@ -464,7 +487,8 @@ class AMQPClient:
         try:
             session = await self._get_session(credentials)
         except AMQPConnectionError as e:
-            # Re-raise with proper classification
+            # Record failure for Circuit Breaker
+            await self._circuit_breaker.record_failure()
             logger.error(
                 "Failed to get session for publish",
                 user=username,
@@ -475,7 +499,8 @@ class AMQPClient:
             )
             raise
         except Exception as e:
-            # Wrap unexpected errors during session acquisition
+            # Record failure for Circuit Breaker
+            await self._circuit_breaker.record_failure()
             logger.error(
                 "Unexpected error during session acquisition",
                 user=username,
@@ -525,6 +550,9 @@ class AMQPClient:
                 timeout=self._settings.publish_timeout,
             )
 
+            # Record success for Circuit Breaker
+            await self._circuit_breaker.record_success()
+
             logger.info(
                 "Message published",
                 user=username,
@@ -535,6 +563,7 @@ class AMQPClient:
             )
 
         except asyncio.TimeoutError:
+            await self._circuit_breaker.record_failure()
             logger.error(
                 "Publish confirmation timeout",
                 user=username,
@@ -547,6 +576,7 @@ class AMQPClient:
                 f"Publish confirmation timeout after {self._settings.publish_timeout}s"
             )
         except aio_pika.exceptions.ChannelClosed as e:
+            await self._circuit_breaker.record_failure()
             # Channel closed errors often indicate authentication or permission issues
             error_msg = str(e).lower()
             logger.error(
@@ -561,6 +591,7 @@ class AMQPClient:
                 raise AMQPConnectionError(f"Authentication failed: {e}")
             raise AMQPPublishError(f"Channel closed: {e}")
         except aio_pika.exceptions.AMQPError as e:
+            await self._circuit_breaker.record_failure()
             # AMQP protocol errors
             logger.error(
                 "AMQP error during publish",
@@ -572,6 +603,7 @@ class AMQPClient:
             )
             raise AMQPPublishError(f"AMQP error: {e}")
         except Exception as e:
+            await self._circuit_breaker.record_failure()
             # Catch-all for unexpected errors
             logger.exception(
                 "Unexpected error during publish",
@@ -590,7 +622,18 @@ class AMQPClient:
         auto_ack: bool = False,
     ) -> ConsumedMessage | None:
         """Consume message using user credentials."""
-        session = await self._get_session(credentials)
+        # Check Circuit Breaker state first (ADR-002)
+        if not await self._circuit_breaker.allow_request():
+            raise CircuitBreakerOpen(
+                f"Circuit breaker is {self._circuit_breaker.state.value} - broker unavailable"
+            )
+
+        try:
+            session = await self._get_session(credentials)
+        except Exception:
+            await self._circuit_breaker.record_failure()
+            raise
+
         timeout = timeout or self._settings.consume_timeout
 
         try:
@@ -641,7 +684,10 @@ class AMQPClient:
 
         except aio_pika.exceptions.QueueEmpty:
             return None
+        except CircuitBreakerOpen:
+            raise
         except Exception as e:
+            await self._circuit_breaker.record_failure()
             raise AMQPConsumeError(f"Failed to consume message: {e}")
 
     async def acknowledge(self, delivery_tag: int, credentials: Tuple[str, str]) -> bool:
@@ -726,6 +772,9 @@ class AMQPClient:
 
     async def health_check(self) -> dict[str, Any]:
         """Check system connection health and aggregate stats."""
+        # Get Circuit Breaker metrics
+        cb_metrics = self._circuit_breaker.metrics
+
         # Ensure system session exists (or try to create/get it)
         try:
             session = await self._get_session(None)
@@ -741,10 +790,11 @@ class AMQPClient:
 
             return {
                 "connected": connected,
-                "ready": connected,
+                "ready": connected and cb_metrics["state"] != "open",
                 "state": "connected" if connected else "disconnected",
                 "pending_messages": total_pending,
                 "active_sessions": active_sessions_count,
+                "circuit_breaker": cb_metrics,
             }
         except Exception:
             # Fallback if system session fails
@@ -761,4 +811,5 @@ class AMQPClient:
                 "state": "disconnected",
                 "pending_messages": 0,
                 "active_sessions": active_sessions_count,
+                "circuit_breaker": cb_metrics,
             }

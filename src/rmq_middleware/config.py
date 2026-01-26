@@ -117,6 +117,32 @@ class Settings(BaseSettings):
         description="Disable Prometheus instrumentation (useful for debugging)",
     )
 
+    # Circuit Breaker Configuration (ADR-002)
+    cb_failure_threshold: int = Field(
+        default=5,
+        ge=1,
+        le=50,
+        description="Number of failures before opening circuit breaker",
+    )
+    cb_failure_window_seconds: float = Field(
+        default=10.0,
+        ge=1.0,
+        le=60.0,
+        description="Sliding window in seconds for failure counting",
+    )
+    cb_recovery_timeout: float = Field(
+        default=30.0,
+        ge=5.0,
+        le=300.0,
+        description="Time in seconds circuit stays open before half-open",
+    )
+    cb_half_open_requests: int = Field(
+        default=1,
+        ge=1,
+        le=10,
+        description="Number of test requests allowed in half-open state",
+    )
+
     @property
     def rabbitmq_url_str(self) -> str:
         """Return RabbitMQ URL as string for aio-pika."""

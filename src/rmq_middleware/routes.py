@@ -21,6 +21,7 @@ from rmq_middleware.amqp_wrapper import (
     AMQPPublishError,
     AMQPConsumeError,
 )
+from rmq_middleware.circuit_breaker import CircuitBreakerOpen
 from rmq_middleware.middleware import get_request_id
 from rmq_middleware.models import PublishRequest, FetchRequest, DeliveryMode
 from rmq_middleware.security import (
@@ -90,6 +91,7 @@ class ReadyResponse(BaseModel):
     amqp_state: str
     pending_messages: int
     active_sessions: int
+    circuit_breaker_state: str = "closed"
 
 
 class ErrorResponse(BaseModel):
@@ -228,6 +230,16 @@ async def publish_message(
                 request_id=request_id,
             ).model_dump(),
         )
+    except CircuitBreakerOpen as e:
+        logger.warning(f"Circuit breaker open - rejecting publish: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=ErrorResponse(
+                error="circuit_breaker_open",
+                detail=str(e),
+                request_id=request_id,
+            ).model_dump(),
+        )
 
 
 @v1_router.post(
@@ -320,6 +332,16 @@ async def fetch_message_post(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=ErrorResponse(
                 error="consume_failed",
+                detail=str(e),
+                request_id=request_id,
+            ).model_dump(),
+        )
+    except CircuitBreakerOpen as e:
+        logger.warning(f"Circuit breaker open - rejecting fetch: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=ErrorResponse(
+                error="circuit_breaker_open",
                 detail=str(e),
                 request_id=request_id,
             ).model_dump(),
@@ -504,6 +526,7 @@ async def readiness_check() -> ReadyResponse:
             amqp_state=health["state"],
             pending_messages=health["pending_messages"],
             active_sessions=health["active_sessions"],
+            circuit_breaker_state=health.get("circuit_breaker", {}).get("state", "unknown"),
         )
 
     except Exception as e:
