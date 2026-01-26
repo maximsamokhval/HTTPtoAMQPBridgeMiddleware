@@ -127,45 +127,45 @@ class UserSession:
 
     async def close(self):
         """Close all channels and connection with robust error handling.
-        
+
         Ensures resources are properly released even if errors occur during close.
         """
         errors = []
-        
+
         # Close consumer channel
-        if hasattr(self, 'consumer_channel') and self.consumer_channel:
+        if hasattr(self, "consumer_channel") and self.consumer_channel:
             try:
                 if not self.consumer_channel.is_closed:
                     await self.consumer_channel.close()
             except Exception as e:
                 errors.append(f"consumer_channel: {e}")
                 logger.warning(f"Error closing consumer channel: {e}")
-        
+
         # Close publisher channel
-        if hasattr(self, 'publisher_channel') and self.publisher_channel:
+        if hasattr(self, "publisher_channel") and self.publisher_channel:
             try:
                 if not self.publisher_channel.is_closed:
                     await self.publisher_channel.close()
             except Exception as e:
                 errors.append(f"publisher_channel: {e}")
                 logger.warning(f"Error closing publisher channel: {e}")
-        
+
         # Close connection
-        if hasattr(self, 'connection') and self.connection:
+        if hasattr(self, "connection") and self.connection:
             try:
                 if not self.connection.is_closed:
                     await self.connection.close()
             except Exception as e:
                 errors.append(f"connection: {e}")
                 logger.warning(f"Error closing connection: {e}")
-        
+
         # Clear pending messages to prevent memory leaks
-        if hasattr(self, 'pending_messages'):
+        if hasattr(self, "pending_messages"):
             self.pending_messages.clear()
-        
+
         # Update state
         self.state = ConnectionState.DISCONNECTED
-        
+
         if errors:
             logger.warning(f"User session closed with {len(errors)} error(s): {', '.join(errors)}")
         else:
@@ -374,12 +374,12 @@ class AMQPClient:
 
     async def shutdown(self, timeout: float = 10.0) -> None:
         """Gracefully shutdown all connections with draining mode.
-        
+
         Args:
             timeout: Maximum time to wait for in-flight operations to complete.
         """
         logger.info("Starting graceful shutdown with draining mode")
-        
+
         # Step 1: Cancel cleanup task
         if self._cleanup_task:
             self._cleanup_task.cancel()
@@ -390,36 +390,36 @@ class AMQPClient:
 
         # Step 2: Set draining mode - prevent new operations
         draining_start = time.time()
-        
+
         # Step 3: Wait for pending messages to be processed
         pending_count = 0
         async with self._session_lock:
             # Count all pending messages across sessions
             for session in self._sessions.values():
                 pending_count += len(session.pending_messages)
-        
+
         if pending_count > 0:
             logger.info(f"Waiting for {pending_count} pending messages to complete")
             # Give some time for in-flight operations to complete
             remaining_time = timeout - (time.time() - draining_start)
             if remaining_time > 0:
                 await asyncio.sleep(min(2.0, remaining_time))
-        
+
         # Step 4: Close all sessions
         async with self._session_lock:
             close_tasks = []
             for key, session in self._sessions.items():
                 close_tasks.append(asyncio.create_task(session.close()))
-            
+
             if close_tasks:
                 try:
                     await asyncio.wait_for(
                         asyncio.gather(*close_tasks, return_exceptions=True),
-                        timeout=max(1.0, timeout - (time.time() - draining_start))
+                        timeout=max(1.0, timeout - (time.time() - draining_start)),
                     )
                 except asyncio.TimeoutError:
                     logger.warning("Timeout closing user sessions, forcing close")
-            
+
             self._sessions.clear()
 
         # Step 5: Close system session
@@ -427,12 +427,12 @@ class AMQPClient:
             try:
                 await asyncio.wait_for(
                     self._system_session.close(),
-                    timeout=max(1.0, timeout - (time.time() - draining_start))
+                    timeout=max(1.0, timeout - (time.time() - draining_start)),
                 )
             except asyncio.TimeoutError:
                 logger.warning("Timeout closing system session, forcing close")
             self._system_session = None
-        
+
         logger.info("Graceful shutdown completed")
 
     # -------------------------------------------------------------------------
@@ -469,7 +469,7 @@ class AMQPClient:
             raise CircuitBreakerOpen(
                 f"Circuit breaker is {self._circuit_breaker.state.value} - broker unavailable"
             )
-        
+
         # Validate message size before attempting to publish
         try:
             validate_message_size(payload)
@@ -480,10 +480,10 @@ class AMQPClient:
                 exchange=exchange,
                 routing_key=routing_key,
                 request_id=request_id,
-                error=str(e)
+                error=str(e),
             )
             raise AMQPPublishError(f"Message validation failed: {e}")
-        
+
         try:
             session = await self._get_session(credentials)
         except AMQPConnectionError as e:
@@ -495,7 +495,7 @@ class AMQPClient:
                 exchange=exchange,
                 routing_key=routing_key,
                 request_id=request_id,
-                error=str(e)
+                error=str(e),
             )
             raise
         except Exception as e:
@@ -507,7 +507,7 @@ class AMQPClient:
                 exchange=exchange,
                 routing_key=routing_key,
                 request_id=request_id,
-                error=str(e)
+                error=str(e),
             )
             raise AMQPConnectionError(f"Failed to establish session: {e}")
 

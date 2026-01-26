@@ -26,7 +26,7 @@ def get_request_id() -> str:
     Returns a non-empty string:
     - If in a request context: returns the request ID (from headers or generated UUID)
     - If not in a request context: returns a generated UUID for traceability
-    
+
     This ensures that request_id is always a valid string for logging and correlation.
     """
     request_id = request_id_ctx.get()
@@ -34,6 +34,7 @@ def get_request_id() -> str:
         # Generate a temporary ID for background operations
         # This ensures consistent logging even outside request context
         import uuid
+
         request_id = f"bg-{uuid.uuid4().hex[:8]}"
         # Store it in context for this call? No, we don't set it back to avoid pollution
     return request_id
@@ -99,11 +100,11 @@ def text_formatter(record: Any) -> str:
     # Safely get request_id with empty string default
     extra = getattr(record, "extra", {})
     request_id = extra.get("request_id", "")
-    
+
     # Ensure request_id is a string and handle empty case
     if not isinstance(request_id, str):
         request_id = str(request_id)
-    
+
     request_id_str = f"[{request_id[:8]}] " if request_id else ""
 
     return (
@@ -134,7 +135,7 @@ def json_sink(message) -> None:
 
     # Safely get extra dict
     extra = getattr(record, "extra", {})
-    
+
     # Add request_id from context if available
     if "request_id" in extra:
         log_entry["request_id"] = extra["request_id"]

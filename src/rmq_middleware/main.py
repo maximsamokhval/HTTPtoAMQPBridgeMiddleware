@@ -85,7 +85,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Shutdown
     logger.info("Starting graceful shutdown of RMQ Middleware")
-    
+
     # Step 1: Cancel metrics task
     metrics_task.cancel()
     try:
@@ -98,7 +98,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Step 2: Set draining mode - reject new requests
     # FastAPI will handle this via lifespan - new requests will get 503
     logger.info("Entering draining mode - waiting for in-flight requests to complete")
-    
+
     # Give some time for in-flight HTTP requests to complete
     # This allows current API calls to finish processing
     await asyncio.sleep(2.0)
@@ -167,15 +167,17 @@ def create_app() -> FastAPI:
     @app.exception_handler(Exception)
     async def general_error_handler(request: Request, exc: Exception) -> JSONResponse:
         request_id = get_request_id()
-        
+
         # Special handling for "Response content longer than Content-Length" error
         # This error occurs when uvicorn detects mismatch between Content-Length header
         # and actual response body length, often due to serialization issues
-        if isinstance(exc, RuntimeError) and "Response content longer than Content-Length" in str(exc):
+        if isinstance(exc, RuntimeError) and "Response content longer than Content-Length" in str(
+            exc
+        ):
             logger.warning(
                 "Content-Length mismatch detected, returning minimal error response",
                 request_id=request_id,
-                error=str(exc)
+                error=str(exc),
             )
             # Return a minimal, properly serialized response to avoid infinite loops
             return JSONResponse(
@@ -186,7 +188,7 @@ def create_app() -> FastAPI:
                     "request_id": request_id,
                 },
             )
-        
+
         logger.exception(f"Unexpected error: {exc}", request_id=request_id)
         return JSONResponse(
             status_code=500,

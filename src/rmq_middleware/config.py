@@ -94,7 +94,7 @@ class Settings(BaseSettings):
         le=104_857_600,  # 100 MB max
         description="Maximum allowed message size in bytes for AMQP messages",
     )
-    
+
     # Application Settings
     app_name: str = Field(
         default="rmq-middleware",
@@ -110,7 +110,7 @@ class Settings(BaseSettings):
         le=65535,
         description="Port to bind the HTTP server",
     )
-    
+
     # Monitoring Configuration
     disable_prometheus: bool = Field(
         default=False,

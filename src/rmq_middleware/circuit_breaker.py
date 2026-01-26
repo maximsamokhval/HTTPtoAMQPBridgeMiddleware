@@ -32,7 +32,11 @@ class CircuitBreakerState(str, Enum):
 class CircuitBreakerOpen(Exception):
     """Raised when circuit breaker is open and request is rejected."""
 
-    def __init__(self, message: str = "Circuit breaker is OPEN", state: CircuitBreakerState = CircuitBreakerState.OPEN):
+    def __init__(
+        self,
+        message: str = "Circuit breaker is OPEN",
+        state: CircuitBreakerState = CircuitBreakerState.OPEN,
+    ):
         self.state = state
         super().__init__(message)
 
