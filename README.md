@@ -19,6 +19,7 @@ This middleware acts as a reliable bridge between HTTP clients and RabbitMQ, ens
 
 - **Protocol Bridging**: Converts HTTP REST requests into AMQP messages.
 - **Reliability**: Uses RabbitMQ Publisher Confirms and manual Acknowledgments to guarantee "At-Least-Once" delivery.
+- **Fault Tolerance**: Circuit Breaker pattern protects against cascade failures when RabbitMQ is unavailable.
 - **Topology Management**: Automatically sets up Exchanges, Queues, and Dead Letter Exchanges (DLX).
 - **Security**:
   - **HTTP Basic Authentication**: Proxies credentials directly to RabbitMQ.
@@ -26,6 +27,24 @@ This middleware acts as a reliable bridge between HTTP clients and RabbitMQ, ens
   - **Rate Limiting** & **Input Validation** (OWASP standards).
 - **Observability**: Structured JSON logging with Correlation IDs and Prometheus metrics.
 - **Strict Schema**: Pydantic V2 models for reliable data handling.
+
+## Circuit Breaker (Fault Tolerance)
+
+The middleware implements the Circuit Breaker pattern to protect against cascade failures:
+
+| State | Behavior |
+|-------|----------|
+| **CLOSED** | Normal operation, requests pass through |
+| **OPEN** | Requests fail immediately with HTTP 503, protecting the broker |
+| **HALF_OPEN** | Testing if service has recovered |
+
+**Configuration** (via environment variables):
+- `CB_FAILURE_THRESHOLD`: Failures before opening (default: 5)
+- `CB_FAILURE_WINDOW_SECONDS`: Sliding window for counting (default: 10)
+- `CB_RECOVERY_TIMEOUT`: Time before half-open test (default: 30)
+- `CB_HALF_OPEN_REQUESTS`: Test requests in half-open (default: 1)
+
+The `/ready` endpoint includes `circuit_breaker_state` field.
 
 ## ⚠️ Security Notice (Production Deployment)
 
