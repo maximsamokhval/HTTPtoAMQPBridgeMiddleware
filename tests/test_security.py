@@ -105,48 +105,54 @@ class TestInputValidation:
 class TestMessageSize:
     def test_validate_message_size_dict_ok(self, monkeypatch):
         from rmq_middleware.config import get_settings
+
         settings = get_settings()
         monkeypatch.setattr(settings, "max_message_size_bytes", 1000)
-        
+
         # Small dict should pass
         validate_message_size({"key": "value"})
-        
+
     def test_validate_message_size_dict_too_large(self, monkeypatch):
         from rmq_middleware.config import get_settings
+
         settings = get_settings()
         monkeypatch.setattr(settings, "max_message_size_bytes", 10)
-        
+
         # Large dict should fail
         with pytest.raises(InputValidationError):
             validate_message_size({"key": "very_long_value_that_exceeds_limit"})
-    
+
     def test_validate_message_size_string_ok(self, monkeypatch):
         from rmq_middleware.config import get_settings
+
         settings = get_settings()
         monkeypatch.setattr(settings, "max_message_size_bytes", 50)
-        
+
         validate_message_size("short string")
-        
+
     def test_validate_message_size_string_too_large(self, monkeypatch):
         from rmq_middleware.config import get_settings
+
         settings = get_settings()
         monkeypatch.setattr(settings, "max_message_size_bytes", 10)
-        
+
         with pytest.raises(InputValidationError):
             validate_message_size("very long string that exceeds limit")
-    
+
     def test_validate_message_size_bytes_ok(self, monkeypatch):
         from rmq_middleware.config import get_settings
+
         settings = get_settings()
         monkeypatch.setattr(settings, "max_message_size_bytes", 50)
-        
+
         validate_message_size(b"short bytes")
-        
+
     def test_validate_message_size_bytes_too_large(self, monkeypatch):
         from rmq_middleware.config import get_settings
+
         settings = get_settings()
         monkeypatch.setattr(settings, "max_message_size_bytes", 10)
-        
+
         with pytest.raises(InputValidationError):
             validate_message_size(b"very long bytes that exceed limit")
 

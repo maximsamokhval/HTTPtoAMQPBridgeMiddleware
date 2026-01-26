@@ -97,17 +97,17 @@ DANGEROUS_PATTERNS = [
     "..",  # Path traversal
     "//",  # Double slash
     "\\",  # Backslash injection
-    "\"",  # Quote injection
-    "'",   # Single quote injection
-    "`",   # Backtick injection
-    "$",   # Variable expansion
-    "(",   # Command injection
-    ")",   # Command injection
-    ";",   # Command separator
-    "&",   # Background process
-    "|",   # Pipe
-    "<",   # Redirect
-    ">",   # Redirect
+    '"',  # Quote injection
+    "'",  # Single quote injection
+    "`",  # Backtick injection
+    "$",  # Variable expansion
+    "(",  # Command injection
+    ")",  # Command injection
+    ";",  # Command separator
+    "&",  # Background process
+    "|",  # Pipe
+    "<",  # Redirect
+    ">",  # Redirect
     "\n",  # Newline injection
     "\r",  # Carriage return
     "\t",  # Tab injection
@@ -116,12 +116,12 @@ DANGEROUS_PATTERNS = [
 
 # Reserved prefixes for RabbitMQ internal resources
 RESERVED_PREFIXES = [
-    "amq.",      # RabbitMQ internal exchanges/queues
-    "rabbitmq.", # RabbitMQ management
-    "celery",    # Celery framework
-    "reply_",    # RPC reply queues
-    "ha.",       # High availability
-    "mirror.",   # Mirrored queues
+    "amq.",  # RabbitMQ internal exchanges/queues
+    "rabbitmq.",  # RabbitMQ management
+    "celery",  # Celery framework
+    "reply_",  # RPC reply queues
+    "ha.",  # High availability
+    "mirror.",  # Mirrored queues
 ]
 
 
@@ -153,7 +153,7 @@ def validate_amqp_name(name: str, field_name: str = "name", allow_wildcards: boo
 
     # Trim whitespace
     name = name.strip()
-    
+
     # Check length
     if len(name) > settings.max_name_length:
         raise InputValidationError(
@@ -184,17 +184,16 @@ def validate_amqp_name(name: str, field_name: str = "name", allow_wildcards: boo
     else:
         if not AMQP_STRICT_PATTERN.match(name):
             raise InputValidationError(
-                f"{field_name} contains invalid characters. "
-                f"Allowed: a-z, A-Z, 0-9, '.', '-', '_'"
+                f"{field_name} contains invalid characters. Allowed: a-z, A-Z, 0-9, '.', '-', '_'"
             )
 
     # Additional security: reject names that could be interpreted as commands
-    if any(cmd in name.lower() for cmd in ["select", "insert", "update", "delete", "drop", "create"]):
+    if any(
+        cmd in name.lower() for cmd in ["select", "insert", "update", "delete", "drop", "create"]
+    ):
         # This is a heuristic to catch obvious SQL/command injection attempts
         # Not perfect but adds defense in depth
-        raise InputValidationError(
-            f"{field_name} contains potentially dangerous content"
-        )
+        raise InputValidationError(f"{field_name} contains potentially dangerous content")
 
     return name
 
@@ -387,30 +386,31 @@ class SecurityHeadersMiddleware:
 
 def validate_message_size(payload: dict[str, Any] | str | bytes) -> None:
     """Validate message payload size against configured limits.
-    
+
     Args:
         payload: The message payload to validate.
-        
+
     Raises:
         InputValidationError: If payload exceeds maximum allowed size.
     """
     from rmq_middleware.config import get_settings
-    
+
     settings = get_settings()
-    
+
     # Calculate payload size
     if isinstance(payload, dict):
         # Approximate JSON size
         import json
-        size = len(json.dumps(payload).encode('utf-8'))
+
+        size = len(json.dumps(payload).encode("utf-8"))
     elif isinstance(payload, str):
-        size = len(payload.encode('utf-8'))
+        size = len(payload.encode("utf-8"))
     elif isinstance(payload, bytes):
         size = len(payload)
     else:
         # Unknown type, convert to string
-        size = len(str(payload).encode('utf-8'))
-    
+        size = len(str(payload).encode("utf-8"))
+
     if size > settings.max_message_size_bytes:
         raise InputValidationError(
             f"Message payload size ({size} bytes) exceeds maximum allowed "
