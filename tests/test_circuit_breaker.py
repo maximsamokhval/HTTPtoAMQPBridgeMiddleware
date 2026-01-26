@@ -2,7 +2,7 @@
 
 import asyncio
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock
 
 from rmq_middleware.circuit_breaker import (
     CircuitBreaker,

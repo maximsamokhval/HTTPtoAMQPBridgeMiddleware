@@ -5,10 +5,7 @@ error work correctly and prevent infinite loops in error handling.
 """
 
 import pytest
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
-from loguru import logger
 
 from rmq_middleware.main import create_app
 from rmq_middleware.middleware import get_request_id
@@ -163,7 +160,6 @@ def test_middleware_request_id_generation():
 def test_prometheus_instrumentation_disabled():
     """Test that Prometheus instrumentation can be disabled via config."""
     import os
-    from rmq_middleware.config import Settings
 
     # Temporarily set environment variable
     os.environ["DISABLE_PROMETHEUS"] = "true"
@@ -182,7 +178,7 @@ def test_prometheus_instrumentation_disabled():
         client = TestClient(app)
 
         # The /metrics endpoint should not exist (returns 404)
-        response = client.get("/metrics")
+        _ = client.get("/metrics")
         # Note: Instrumentator exposes /metrics by default, but if disabled
         # it might still exist if instrumentation was skipped.
         # We'll just verify the app starts without error
